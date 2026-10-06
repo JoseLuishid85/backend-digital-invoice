@@ -13,12 +13,12 @@ const PORT = process.env.PORT || 3000;
 
 // Middlewares globales
 app.use(cors());
-app.use(express.json());
+app.use(express.json()); 
 
 // Rutas
-app.use('/invoice/api/facturas', facturaRoutes);
-app.use('/invoice/api/productos', productoRoutes);
-app.use('/invoice/api/tasas', tasaRoutes);
+app.use('/digital/api/facturas', facturaRoutes);
+app.use('/digital/api/productos', productoRoutes);
+app.use('/digital/api/tasas', tasaRoutes);
 
 // Ruta no encontrada
 app.use((req, res) => {
