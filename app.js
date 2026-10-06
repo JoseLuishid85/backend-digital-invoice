@@ -16,9 +16,9 @@ app.use(cors());
 app.use(express.json()); 
 
 // Rutas
-app.use('/digital/api/facturas', facturaRoutes);
-app.use('/digital/api/productos', productoRoutes);
-app.use('/digital/api/tasas', tasaRoutes);
+app.use('/bill/api/facturas', facturaRoutes);
+app.use('/bill/api/productos', productoRoutes);
+app.use('/bill/api/tasas', tasaRoutes);
 
 // Ruta no encontrada
 app.use((req, res) => {
