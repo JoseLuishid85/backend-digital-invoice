@@ -15,7 +15,8 @@ const PORT = process.env.PORT || 3000;
 app.use(cors());
 app.use(express.json()); 
 
-// Rutas
+// Rutas 
+//Vamos hacer una prueba 
 app.use('/bill/api/facturas', facturaRoutes);
 app.use('/bill/api/productos', productoRoutes);
 app.use('/bill/api/tasas', tasaRoutes);
