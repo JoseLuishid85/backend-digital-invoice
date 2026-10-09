@@ -60,6 +60,15 @@ Analiza la imagen y extrae:
 - total: total final a pagar como número, sin símbolos de moneda.
 - tasa_dia: tasa de cambio del día en bolívares por dólar si aparece en la factura (ej. "Tasa BCV", "Tasa de cambio"); null si no aparece.
 - productos: cada línea de producto con cantidad, descripcion, precio_unitario e importe (números sin símbolos, en la moneda principal de la factura), y precio_unitario_usd: precio unitario en dólares solo si la factura lo muestra (ej. columna "REF", "$" o "USD"); null si no aparece.
+
+Reglas para los productos:
+- En los tickets fiscales venezolanos (SENIAT) cada producto ocupa una línea con la descripción y el importe a la derecha (ej. "T101-0012/TUER G2 NC 5/8 (G)   Bs 5.636,32"). Cuando la cantidad es mayor que 1, se imprime una línea "cantidad x precio unitario" (ej. "16xBs 352,27") JUSTO ENCIMA de la línea del producto al que pertenece, no debajo.
+- Esa línea "NxBs P" nunca es un producto ni una descripción: úsala solo para la cantidad y el precio_unitario del producto de la línea siguiente.
+- Si un producto no tiene línea de cantidad encima, su cantidad es 1 y su precio_unitario es igual a su importe.
+- Comprueba cada producto: cantidad × precio_unitario debe ser igual al importe. Si no cuadra, revisa a qué producto pertenece la línea de cantidad.
+- Incluye todos los productos del ticket. La suma de los importes debe dar el subtotal (antes de impuestos) impreso. No incluyas como productos las líneas de SUBTOTAL, base imponible (BI), IVA, forma de pago ni TOTAL.
+- Los números usan punto para miles y coma para decimales (ej. "25.539,35" = 25539.35).
+
 Si la imagen no es una factura o ticket, devuelve nombre_empresa vacío, total 0 y productos vacío.`;
 
 module.exports = { ai, GEMINI_MODEL, facturaSchema, PROMPT };

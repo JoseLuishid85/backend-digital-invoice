@@ -4,6 +4,7 @@ const path = require('path');
 const { sequelize, Factura, DetalleFactura, TasaDia } = require('../models');
 const { aNumero, aNumeroOpcional, aFecha, fechaHoy } = require('../utils/valores');
 const { ai, GEMINI_MODEL, facturaSchema, PROMPT } = require('../config/gemini');
+const { buscarTasaDelDia } = require('../utils/tasaBcv');
 
 const MONEDAS = ['VES', 'USD'];
 
@@ -27,6 +28,15 @@ const guardarImagen = async (archivo) => {
     return nombre;
 };
 
+// Tasa sugerida para la factura: la escrita por el usuario, luego la impresa en la factura,
+// luego la registrada ese día y por último la oficial del BCV (DolarApi)
+const resolverTasa = async (tasaUsuario, tasaFactura, fecha) => {
+    if (tasaUsuario) return { tasa: tasaUsuario, origen: 'usuario' };
+    if (tasaFactura) return { tasa: tasaFactura, origen: 'factura' };
+    return buscarTasaDelDia(fecha);
+};
+
+// Paso 1: lee la imagen con Gemini y devuelve los datos para revisarlos. No guarda nada.
 const procesarFactura = async (req, res) => {
     // a. Validar que llegó la imagen en el campo 'imagen'
     if (!req.file) {
@@ -70,36 +80,96 @@ const procesarFactura = async (req, res) => {
 
     const fechaFactura = aFecha(datos.fecha);
 
-    // e. Guardar la imagen en disco
-    let nombreImagen;
+    // e. Tasa sugerida (el usuario puede cambiarla antes de guardar)
+    let tasa;
     try {
-        nombreImagen = await guardarImagen(req.file);
+        tasa = await resolverTasa(
+            aNumeroOpcional(req.body?.tasa_dia),
+            aNumeroOpcional(datos.tasa_dia),
+            fechaFactura || fechaHoy(),
+        );
+    } catch (error) {
+        console.error('Error al obtener la tasa del día:', error);
+        tasa = { tasa: null, origen: null };
+    }
+
+    // f. Responder con los datos extraídos para que el usuario los revise y los guarde
+    return res.json({
+        ok: true,
+        mensaje: 'Datos extraídos. Revísalos y guarda la factura.',
+        factura: {
+            nombre_empresa: datos.nombre_empresa,
+            numero_factura: datos.numero_factura || null,
+            fecha: fechaFactura,
+            total: aNumero(datos.total),
+            moneda,
+            tasa_dia: tasa.tasa,
+            tasa_origen: tasa.origen,
+            detalles: (datos.productos || []).map((p) => ({
+                cantidad: aNumero(p.cantidad) || 1,
+                descripcion: p.descripcion || '',
+                precio_unitario: aNumero(p.precio_unitario),
+                importe: aNumero(p.importe),
+                precio_unitario_usd: aNumeroOpcional(p.precio_unitario_usd),
+            })),
+        },
+    });
+};
+
+// Paso 2: guarda la factura revisada (form-data: 'datos' con el JSON de la factura e 'imagen' opcional,
+// porque una factura cargada a mano puede no tener foto)
+const guardarFactura = async (req, res) => {
+    let datos;
+    try {
+        datos = JSON.parse(req.body?.datos);
+    } catch {
+        datos = null;
+    }
+    if (!datos || typeof datos !== 'object') {
+        return res.status(400).json({ ok: false, mensaje: "Debes enviar los datos de la factura en el campo 'datos'." });
+    }
+
+    const nombreEmpresa = String(datos.nombre_empresa || '').trim();
+    if (!nombreEmpresa) {
+        return res.status(400).json({ ok: false, mensaje: 'El nombre de la empresa es obligatorio.' });
+    }
+
+    const moneda = datos.moneda || 'VES';
+    if (!MONEDAS.includes(moneda)) {
+        return res.status(400).json({ ok: false, mensaje: 'Moneda inválida. Usa VES (bolívares) o USD (dólares).' });
+    }
+
+    if (datos.fecha && !aFecha(datos.fecha)) {
+        return res.status(400).json({ ok: false, mensaje: 'Fecha inválida. Usa el formato YYYY-MM-DD.' });
+    }
+    const fechaFactura = aFecha(datos.fecha);
+    const tasaDia = aNumeroOpcional(datos.tasa_dia);
+    const productos = Array.isArray(datos.detalles) ? datos.detalles : [];
+
+    // a. Guardar la imagen en disco, si se envió
+    let nombreImagen = null;
+    try {
+        if (req.file) nombreImagen = await guardarImagen(req.file);
     } catch (error) {
         console.error('Error al guardar la imagen:', error);
         return res.status(500).json({ ok: false, mensaje: 'Error al guardar la imagen de la factura.' });
     }
 
-    // f. Guardar factura + detalles en una sola transacción
+    // b. Guardar factura + detalles en una sola transacción
     try {
         const factura = await sequelize.transaction(async (t) => {
-            // Tasa: la escrita por el usuario, luego la impresa en la factura y por último la registrada ese día
-            const fechaTasa = fechaFactura || fechaHoy();
-            let tasaDia = aNumeroOpcional(req.body?.tasa_dia) ?? aNumeroOpcional(datos.tasa_dia);
+            // Si ese día aún no tiene tasa registrada, la registramos (un solo registro por día)
             if (tasaDia) {
-                // Si ese día aún no tiene tasa registrada, la registramos (un solo registro por día)
                 await TasaDia.findOrCreate({
-                    where: { fecha: fechaTasa },
+                    where: { fecha: fechaFactura || fechaHoy() },
                     defaults: { tasa: tasaDia },
                     transaction: t,
                 });
-            } else {
-                const registro = await TasaDia.findOne({ where: { fecha: fechaTasa }, transaction: t });
-                tasaDia = registro ? Number(registro.tasa) : null;
             }
 
             const nuevaFactura = await Factura.create({
-                nombre_empresa: datos.nombre_empresa,
-                numero_factura: datos.numero_factura || null,
+                nombre_empresa: nombreEmpresa,
+                numero_factura: String(datos.numero_factura || '').trim() || null,
                 fecha: fechaFactura,
                 total: aNumero(datos.total),
                 moneda,
@@ -107,7 +177,7 @@ const procesarFactura = async (req, res) => {
                 imagen: nombreImagen,
             }, { transaction: t });
 
-            const detalles = (datos.productos || []).map((p) => {
+            const detalles = productos.map((p) => {
                 const precioUnitario = aNumero(p.precio_unitario);
                 let precioUsd;
                 if (moneda === 'USD') {
@@ -123,7 +193,7 @@ const procesarFactura = async (req, res) => {
                 return {
                     factura_id: nuevaFactura.id,
                     cantidad: aNumero(p.cantidad) || 1,
-                    descripcion: p.descripcion || 'Sin descripción',
+                    descripcion: String(p.descripcion || '').trim() || 'Sin descripción',
                     precio_unitario: precioUnitario,
                     importe: aNumero(p.importe),
                     precio_unitario_usd: precioUsd,
@@ -137,21 +207,22 @@ const procesarFactura = async (req, res) => {
             return nuevaFactura;
         });
 
-        // g. Responder con la factura guardada y sus detalles
+        // c. Responder con la factura guardada y sus detalles
         const facturaGuardada = await Factura.findByPk(factura.id, {
             include: [{ model: DetalleFactura, as: 'detalles' }],
+            order: [[{ model: DetalleFactura, as: 'detalles' }, 'id', 'ASC']],
         });
 
         return res.status(201).json({
             ok: true,
-            mensaje: 'Factura procesada y guardada correctamente.',
+            mensaje: 'Factura guardada correctamente.',
             id: factura.id,
             factura: facturaGuardada,
         });
     } catch (error) {
         console.error('Error al guardar la factura:', error);
         // Si la factura no se guardó, la imagen queda huérfana: la borramos
-        await fs.unlink(path.join(CARPETA_IMAGENES, nombreImagen)).catch(() => {});
+        if (nombreImagen) await fs.unlink(path.join(CARPETA_IMAGENES, nombreImagen)).catch(() => {});
         return res.status(500).json({ ok: false, mensaje: 'Error al guardar la factura en la base de datos.' });
     }
 };
@@ -206,4 +277,4 @@ const obtenerImagenFactura = async (req, res) => {
     }
 };
 
-module.exports = { procesarFactura, obtenerFactura, obtenerImagenFactura };
+module.exports = { procesarFactura, guardarFactura, obtenerFactura, obtenerImagenFactura };

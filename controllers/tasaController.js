@@ -1,5 +1,6 @@
 const { TasaDia } = require('../models');
 const { aNumeroOpcional, aFecha } = require('../utils/valores');
+const { buscarTasaDelDia } = require('../utils/tasaBcv');
 
 const LIMITE_TASAS = 90;
 
@@ -43,4 +44,20 @@ const guardarTasa = async (req, res) => {
     }
 };
 
-module.exports = { listarTasas, guardarTasa };
+// Tasa sugerida para una fecha: la registrada ese día o, si no hay, la oficial del BCV. No guarda nada.
+const obtenerTasaSugerida = async (req, res) => {
+    const fecha = aFecha(req.params.fecha);
+    if (!fecha) {
+        return res.status(400).json({ ok: false, mensaje: 'Fecha inválida. Usa el formato YYYY-MM-DD.' });
+    }
+
+    try {
+        const { tasa, origen } = await buscarTasaDelDia(fecha);
+        return res.json({ ok: true, fecha, tasa, origen });
+    } catch (error) {
+        console.error('Error al buscar la tasa sugerida:', error);
+        return res.status(500).json({ ok: false, mensaje: 'Error al buscar la tasa del día.' });
+    }
+};
+
+module.exports = { listarTasas, guardarTasa, obtenerTasaSugerida };
