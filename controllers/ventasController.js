@@ -47,6 +47,7 @@ const leerProductos = (lista) => {
         if (!cantidad) return { error: `La cantidad de "${producto}" debe ser mayor que 0.` };
         if (precio === null) return { error: `El precio de "${producto}" no es válido.` };
         productos.push({
+            id_producto: aTexto(linea?.id_producto),
             producto,
             cantidad,
             precio_unitario: redondear(precio),
@@ -54,6 +55,24 @@ const leerProductos = (lista) => {
         });
     }
     return { productos };
+};
+
+// Completa id_producto de cada línea con el catálogo: valida el ID recibido o, si no viene,
+// busca el producto por nombre (los escritos a mano que no están en el catálogo quedan sin ID).
+// Devuelve { productos } o { error }
+const enlazarCatalogo = (productos, catalogo) => {
+    const enlazados = [];
+    for (const linea of productos) {
+        const nombre = linea.producto.toLowerCase();
+        const producto = linea.id_producto
+            ? catalogo.find((p) => mismoId(p.id_producto, linea.id_producto))
+            : catalogo.find((p) => aTexto(p.nombre).toLowerCase() === nombre);
+        if (linea.id_producto && !producto) {
+            return { error: `El producto ${linea.id_producto} ("${linea.producto}") no existe en el catálogo.` };
+        }
+        enlazados.push({ ...linea, id_producto: producto?.id_producto ?? '' });
+    }
+    return { productos: enlazados };
 };
 
 // Vacía las filas escritas antes de un fallo (Sheets no tiene transacciones)
@@ -92,7 +111,7 @@ const listarVentas = async (req, res) => {
 };
 
 // POST /bill/api/vendedores/ventas
-// body JSON: { id_cliente, tipo_pago, productos: [{ producto, cantidad, precio_unitario }],
+// body JSON: { id_cliente, tipo_pago, productos: [{ producto, cantidad, precio_unitario, id_producto? }],
 //              numero_factura?, fecha_venta?, fecha_vencimiento?, entregada?, observaciones? }
 // Una venta a crédito crea también su deuda y respeta el límite de crédito del cliente (0 = sin límite).
 const crearVenta = async (req, res) => {
@@ -128,7 +147,9 @@ const crearVenta = async (req, res) => {
 
     try {
         const resultado = await conBloqueo(async () => {
-            const hojas = await leerHojas(HOJAS.clientes, HOJAS.deudas, HOJAS.ventas, HOJAS.ventasDetalle);
+            const hojas = await leerHojas(
+                HOJAS.clientes, HOJAS.deudas, HOJAS.ventas, HOJAS.ventasDetalle, HOJAS.productos,
+            );
             const cliente = clientesDelVendedor(hojas[HOJAS.clientes].filas, req.vendedor.id_vendedor)
                 .find((c) => mismoId(c.id_cliente, idCliente));
             if (!cliente) return { status: 404, mensaje: 'Cliente no encontrado.' };
@@ -147,10 +168,13 @@ const crearVenta = async (req, res) => {
                 }
             }
 
+            const enlace = enlazarCatalogo(productos, hojas[HOJAS.productos].filas);
+            if (enlace.error) return { status: 400, mensaje: enlace.error };
+
             const idVenta = siguienteId(hojas[HOJAS.ventas].filas, 'id_venta', 'VEN');
             const escritas = [];
             try {
-                const detalles = await agregarFilas(HOJAS.ventasDetalle, productos.map((p, i) => ({
+                const detalles = await agregarFilas(HOJAS.ventasDetalle, enlace.productos.map((p, i) => ({
                     id_detalle: `${idVenta}-${i + 1}`,
                     id_venta: idVenta,
                     ...p,

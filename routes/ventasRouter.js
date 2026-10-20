@@ -9,7 +9,7 @@ const router = Router();
 router.get('/', verificarTokenVendedor, listarVentas);
 
 // POST /bill/api/vendedores/ventas  (genera id_venta VEN-001...; si es a crédito crea también la deuda)
-// body JSON: { id_cliente, tipo_pago, productos: [{ producto, cantidad, precio_unitario }],
+// body JSON: { id_cliente, tipo_pago, productos: [{ producto, cantidad, precio_unitario, id_producto? }],
 //              numero_factura?, fecha_venta?, fecha_vencimiento?, entregada?, observaciones? }
 router.post('/', verificarTokenVendedor, crearVenta);
 
