@@ -4,9 +4,11 @@ const cors = require('cors');
 const multer = require('multer');
 const { sequelize } = require('./models');
 const { agregarColumnasFaltantes } = require('./config/columnas');
+/*
 const facturaRoutes = require('./routes/facturaRoutes');
 const productoRoutes = require('./routes/productoRoutes');
 const tasaRoutes = require('./routes/tasaRoutes');
+*/
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -17,9 +19,18 @@ app.use(express.json());
 
 // Rutas 
 //Vamos hacer una prueba 
-app.use('/bill/api/facturas', facturaRoutes);
-app.use('/bill/api/productos', productoRoutes);
-app.use('/bill/api/tasas', tasaRoutes);
+app.use('/bill/api/facturas', require('./routes/facturaRoutes'));
+app.use('/bill/api/productos', require('./routes/productoRoutes'));
+app.use('/bill/api/tasas', require('./routes/tasaRoutes'));
+
+// Cartera de vendedores (Google Sheets)
+app.use('/bill/api/vendedores/clientes', require('./routes/clientesRouter'));
+app.use('/bill/api/vendedores/deudas', require('./routes/deudasRouter'));
+app.use('/bill/api/vendedores/pagos', require('./routes/pagosRouter'));
+app.use('/bill/api/vendedores/ventas', require('./routes/ventasRouter'));
+app.use('/bill/api/vendedores/resumen', require('./routes/resumenRouter'));
+app.use('/bill/api/vendedores/productos', require('./routes/productosRouter'));
+app.use('/bill/api/vendedores', require('./routes/vendedoresRouter'));
 
 // Ruta no encontrada
 app.use((req, res) => {
