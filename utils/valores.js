@@ -25,4 +25,10 @@ const fechaHoy = () => {
     return `${hoy.getFullYear()}-${mes}-${dia}`;
 };
 
-module.exports = { aNumero, aNumeroOpcional, aFecha, fechaHoy };
+// Suma días a una fecha YYYY-MM-DD (en UTC para que el cambio de hora no mueva el día)
+const sumarDias = (fecha, dias) => {
+    const [anio, mes, dia] = fecha.split('-').map(Number);
+    return new Date(Date.UTC(anio, mes - 1, dia + dias)).toISOString().slice(0, 10);
+};
+
+module.exports = { aNumero, aNumeroOpcional, aFecha, fechaHoy, sumarDias };

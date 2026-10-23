@@ -9,6 +9,7 @@ const HOJAS = {
     ventas: 'Ventas',
     ventasDetalle: 'Ventas_Detalle',
     productos: 'Productos',
+    tasas: 'Tasas_Dolar',
     logs: 'Historial_Logs',
 };
 
@@ -257,6 +258,12 @@ const siguienteId = (filas, campo, prefijo) => {
     return `${prefijo}-${String(maximo + 1).padStart(3, '0')}`;
 };
 
+// Varios IDs seguidos (para escribir varias filas de una vez): PAG-004, PAG-005...
+const siguientesIds = (filas, campo, prefijo, cantidad) => {
+    const primero = Number(siguienteId(filas, campo, prefijo).split('-').pop());
+    return Array.from({ length: cantidad }, (_, i) => `${prefijo}-${String(primero + i).padStart(3, '0')}`);
+};
+
 // Sheets no tiene transacciones: las escrituras de este proceso se encolan una tras otra
 // para que dos peticiones simultáneas no generen el mismo ID ni pisen montos de una deuda.
 let cola = Promise.resolve();
@@ -278,6 +285,7 @@ module.exports = {
     actualizarFila,
     actualizarFilaDonde,
     siguienteId,
+    siguientesIds,
     conBloqueo,
     readSheet,
     appendRow,

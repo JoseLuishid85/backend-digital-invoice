@@ -1,5 +1,6 @@
 const { Router } = require('express');
 const { verificarTokenVendedor } = require('../middlewares/authVendedoresMiddleware');
+const { subirComprobantes } = require('../middlewares/uploadComprobantes');
 const { listarVentas, crearVenta, registrarEntrega } = require('../controllers/ventasController');
 
 // Ventas y entregas del vendedor logueado (hojas Ventas y Ventas_Detalle)
@@ -9,9 +10,12 @@ const router = Router();
 router.get('/', verificarTokenVendedor, listarVentas);
 
 // POST /bill/api/vendedores/ventas  (genera id_venta VEN-001...; si es a crédito crea también la deuda)
-// body JSON: { id_cliente, tipo_pago, productos: [{ producto, cantidad, precio_unitario, id_producto? }],
-//              numero_factura?, fecha_venta?, fecha_vencimiento?, entregada?, observaciones? }
-router.post('/', verificarTokenVendedor, crearVenta);
+// multipart: datos = JSON { id_cliente, tipo_pago, plazo_dias? (7, 15 o 30 si es a crédito),
+//              productos: [{ producto, cantidad, id_producto? }] (el precio sale del catálogo según contado o plazo),
+//              pagos? (contado: [{ metodo, monto, referencia? }] que sumen el total),
+//              fecha_venta?, entregada?, observaciones? }  (numero_factura se asigna solo: 000001, 000002...)
+//            + comprobante_<n> opcional (foto o PDF de la forma de pago n). También acepta el JSON como body.
+router.post('/', verificarTokenVendedor, subirComprobantes, crearVenta);
 
 // PATCH /bill/api/vendedores/ventas/:id/entrega  (body JSON: { fecha_entrega?, nota_entrega? })
 router.patch('/:id/entrega', verificarTokenVendedor, registrarEntrega);

@@ -30,6 +30,7 @@ app.use('/bill/api/vendedores/pagos', require('./routes/pagosRouter'));
 app.use('/bill/api/vendedores/ventas', require('./routes/ventasRouter'));
 app.use('/bill/api/vendedores/resumen', require('./routes/resumenRouter'));
 app.use('/bill/api/vendedores/productos', require('./routes/productosRouter'));
+app.use('/bill/api/vendedores/tasas', require('./routes/tasasRouter'));
 app.use('/bill/api/vendedores', require('./routes/vendedoresRouter'));
 
 // Ruta no encontrada
@@ -40,9 +41,11 @@ app.use((req, res) => {
 // Manejo centralizado de errores (incluye errores de Multer)
 app.use((err, req, res, next) => {
     if (err instanceof multer.MulterError) {
-        const mensaje = err.code === 'LIMIT_FILE_SIZE'
-            ? 'La imagen supera el tamaño máximo de 10 MB.'
-            : `Error al subir el archivo: ${err.message}`;
+        const mensajes = {
+            LIMIT_FILE_SIZE: 'El archivo supera el tamaño máximo de 10 MB.',
+            LIMIT_FILE_COUNT: 'Se enviaron demasiados archivos.',
+        };
+        const mensaje = mensajes[err.code] || `Error al subir el archivo: ${err.message}`;
         return res.status(400).json({ ok: false, mensaje });
     }
     console.error(err);

@@ -18,11 +18,11 @@ router.get('/', verificarTokenVendedor, listarProductos);
 router.get('/:id', verificarTokenVendedor, obtenerProducto);
 
 // POST /bill/api/vendedores/productos  (genera id_producto PROD-001, PROD-002...)
-// body JSON: { nombre, precio, descripcion?, stock? }
+// body JSON: { nombre, precio, precio_7?, precio_15?, precio_30?, descripcion?, stock? }  (precio = contado)
 router.post('/', verificarTokenVendedor, crearProducto);
 
 // PUT /bill/api/vendedores/productos/:id
-// body JSON: { nombre?, descripcion?, precio?, stock?, estado? }
+// body JSON: { nombre?, descripcion?, precio?, precio_7?, precio_15?, precio_30?, stock?, estado? }
 router.put('/:id', verificarTokenVendedor, actualizarProducto);
 
 // DELETE /bill/api/vendedores/productos/:id  (borra la fila; las ventas guardan el nombre, no el ID)

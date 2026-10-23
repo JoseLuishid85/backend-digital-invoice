@@ -7,7 +7,22 @@ const aMonto = (valor) => {
     return Number.isFinite(n) ? n : 0;
 };
 
+// Igual que aMonto, pero una celda vacía o inválida es null (p. ej. un precio por plazo sin definir)
+const aMontoOpcional = (valor) => {
+    if (typeof valor === 'number') return valor;
+    const texto = String(valor ?? '').trim().replace(',', '.');
+    const n = Number(texto);
+    return texto !== '' && Number.isFinite(n) ? n : null;
+};
+
 const redondear = (n) => Math.round(n * 100) / 100;
+
+// Plazos de las ventas a crédito (días). Cada uno tiene su precio en Productos: precio_7, precio_15, precio_30
+const PLAZOS_CREDITO = [7, 15, 30];
+const columnaPrecio = (plazo) => (plazo ? `precio_${plazo}` : 'precio');
+
+// Precio de un producto de la hoja de contado (plazo vacío) o a un plazo; sin precio a ese plazo, el de contado
+const precioSegunPlazo = (producto, plazo) => aMontoOpcional(producto[columnaPrecio(plazo)]) ?? aMonto(producto.precio);
 
 // Compara IDs ignorando mayúsculas y espacios (en la hoja se escriben a mano)
 const mismoId = (a, b) => String(a ?? '').trim().toUpperCase() === String(b ?? '').trim().toUpperCase();
@@ -61,6 +76,9 @@ const formatearVenta = ({ _fila, ...venta }, clientes = [], detalles = []) => {
     return {
         ...venta,
         monto_total: aMonto(venta.monto_total),
+        plazo_dias: aMontoOpcional(venta.plazo_dias),
+        tasa_bcv: aMontoOpcional(venta.tasa_bcv),
+        monto_total_bs: aMontoOpcional(venta.monto_total_bs),
         cliente_nombre: cliente?.nombre_comercial ?? '',
         productos: detalles
             .filter((d) => mismoId(d.id_venta, venta.id_venta))
@@ -90,7 +108,11 @@ const responderError = (res, error, mensaje) => {
 
 module.exports = {
     aMonto,
+    aMontoOpcional,
     redondear,
+    PLAZOS_CREDITO,
+    columnaPrecio,
+    precioSegunPlazo,
     mismoId,
     aTexto,
     fechaHoraActual,

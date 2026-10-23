@@ -12,8 +12,9 @@ const restarDia = (fecha) => {
     return d.toISOString().slice(0, 10);
 };
 
-// Devuelve la tasa (Bs por dólar) vigente en la fecha YYYY-MM-DD, o null si no se pudo obtener
-const consultarTasaBcv = async (fecha) => {
+// Devuelve { tasa, fecha } con la tasa (Bs por dólar) vigente en la fecha YYYY-MM-DD y el día en que
+// se publicó (anterior si era fin de semana o feriado), o null si no se pudo obtener
+const consultarTasaBcvConFecha = async (fecha) => {
     let dia = fecha;
     for (let intento = 0; intento <= DIAS_HACIA_ATRAS; intento++) {
         try {
@@ -23,7 +24,7 @@ const consultarTasaBcv = async (fecha) => {
             if (respuesta.ok) {
                 const datos = await respuesta.json();
                 const tasa = Number(datos?.promedio);
-                if (Number.isFinite(tasa) && tasa > 0) return tasa;
+                if (Number.isFinite(tasa) && tasa > 0) return { tasa, fecha: dia };
             } else if (respuesta.status !== 404) {
                 console.error(`DolarApi respondió ${respuesta.status} para ${dia}.`);
                 return null;
@@ -36,6 +37,8 @@ const consultarTasaBcv = async (fecha) => {
     }
     return null;
 };
+
+const consultarTasaBcv = async (fecha) => (await consultarTasaBcvConFecha(fecha))?.tasa ?? null;
 
 // Tasa para una fecha cuando el usuario no la escribe: la registrada ese día y, si no hay, la del BCV
 const buscarTasaDelDia = async (fecha) => {
@@ -50,4 +53,4 @@ const buscarTasaDelDia = async (fecha) => {
     return { tasa: null, origen: null };
 };
 
-module.exports = { consultarTasaBcv, buscarTasaDelDia };
+module.exports = { consultarTasaBcv, consultarTasaBcvConFecha, buscarTasaDelDia };
