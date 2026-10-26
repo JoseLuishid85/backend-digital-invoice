@@ -1,8 +1,8 @@
 const { google } = require('googleapis');
 
-// Pestañas del documento de cartera (vendedores, clientes, deudas y pagos)
+// Pestañas del documento de cartera (usuarios, clientes, deudas y pagos)
 const HOJAS = {
-    vendedores: 'Vendedores',
+    usuarios: 'Usuarios', // vendedores y administradores (columna nivel_acceso)
     clientes: 'Clientes',
     deudas: 'Deudas',
     pagos: 'Pagos',

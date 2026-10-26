@@ -1,7 +1,6 @@
 const { HOJAS, leerHojas } = require('../services/googleSheetsService');
 const {
-    aMonto,
-    redondear,
+    sumar,
     mismoId,
     aTexto,
     clientesDelVendedor,
@@ -12,8 +11,6 @@ const {
 const { fechaHoy } = require('../utils/valores');
 
 const LARGO_LISTAS = 5;
-
-const sumar = (lista, campo) => redondear(lista.reduce((suma, item) => suma + aMonto(item[campo]), 0));
 
 // GET /bill/api/vendedores/resumen
 // Cifras de la pantalla de inicio del vendedor: ventas, cobros, saldo por cobrar y entregas pendientes

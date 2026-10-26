@@ -1,4 +1,4 @@
-// Cambia la contraseña de un vendedor (escribe el hash bcrypt en la columna password_hash).
+// Cambia la contraseña de un usuario, vendedor o administrador (escribe el hash bcrypt en la columna password_hash).
 // Uso: node scripts/cambiarPassword.js email@dominio.com nuevaContraseña
 require('dotenv').config({ quiet: true });
 const bcrypt = require('bcrypt');
@@ -13,15 +13,15 @@ const cambiar = async () => {
     }
 
     const vendedor = await actualizarFilaDonde(
-        HOJAS.vendedores,
+        HOJAS.usuarios,
         (v) => String(v.email).trim().toLowerCase() === email.toLowerCase(),
         { password_hash: await bcrypt.hash(password, 10) },
     );
     if (!vendedor) {
-        console.error(`No existe un vendedor con el email ${email}.`);
+        console.error(`No existe un usuario con el email ${email}.`);
         process.exit(1);
     }
-    console.log(`Contraseña actualizada para ${vendedor.id_vendedor} (${vendedor.email}).`);
+    console.log(`Contraseña actualizada para ${vendedor.id_usuario} (${vendedor.email}).`);
 };
 
 cambiar().catch((error) => {

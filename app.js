@@ -31,6 +31,7 @@ app.use('/bill/api/vendedores/ventas', require('./routes/ventasRouter'));
 app.use('/bill/api/vendedores/resumen', require('./routes/resumenRouter'));
 app.use('/bill/api/vendedores/productos', require('./routes/productosRouter'));
 app.use('/bill/api/vendedores/tasas', require('./routes/tasasRouter'));
+app.use('/bill/api/vendedores/admin', require('./routes/adminRouter'));
 app.use('/bill/api/vendedores', require('./routes/vendedoresRouter'));
 
 // Ruta no encontrada

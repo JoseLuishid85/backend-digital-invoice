@@ -17,6 +17,9 @@ const aMontoOpcional = (valor) => {
 
 const redondear = (n) => Math.round(n * 100) / 100;
 
+// Suma de un campo de monto en una lista de filas, redondeada a centavos
+const sumar = (lista, campo) => redondear(lista.reduce((suma, item) => suma + aMonto(item[campo]), 0));
+
 // Plazos de las ventas a crédito (días). Cada uno tiene su precio en Productos: precio_7, precio_15, precio_30
 const PLAZOS_CREDITO = [7, 15, 30];
 const columnaPrecio = (plazo) => (plazo ? `precio_${plazo}` : 'precio');
@@ -29,6 +32,17 @@ const mismoId = (a, b) => String(a ?? '').trim().toUpperCase() === String(b ?? '
 
 // Texto opcional recortado; '' si no viene
 const aTexto = (valor) => (valor === null || valor === undefined ? '' : String(valor).trim());
+
+// Niveles de acceso de la columna nivel_acceso de la hoja Usuarios
+const NIVELES = { vendedor: 'Vendedor', administrador: 'Administrador' };
+
+const esAdministrador = (nivel) => aTexto(nivel).toLowerCase() === NIVELES.administrador.toLowerCase();
+
+// Usuario activo: estado vacío o "activo" (sin importar mayúsculas)
+const usuarioActivo = (usuario) => {
+    const estado = aTexto(usuario.estado).toLowerCase();
+    return estado === '' || estado === 'activo';
+};
 
 // Fecha y hora local: YYYY-MM-DD HH:mm:ss
 const fechaHoraActual = () => {
@@ -110,11 +124,15 @@ module.exports = {
     aMonto,
     aMontoOpcional,
     redondear,
+    sumar,
     PLAZOS_CREDITO,
     columnaPrecio,
     precioSegunPlazo,
     mismoId,
     aTexto,
+    NIVELES,
+    esAdministrador,
+    usuarioActivo,
     fechaHoraActual,
     clientesDelVendedor,
     saldoCliente,
