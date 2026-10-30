@@ -28,9 +28,12 @@ app.use('/bill/api/vendedores/clientes', require('./routes/clientesRouter'));
 app.use('/bill/api/vendedores/deudas', require('./routes/deudasRouter'));
 app.use('/bill/api/vendedores/pagos', require('./routes/pagosRouter'));
 app.use('/bill/api/vendedores/ventas', require('./routes/ventasRouter'));
+app.use('/bill/api/vendedores/pedidos', require('./routes/pedidosRouter'));
 app.use('/bill/api/vendedores/resumen', require('./routes/resumenRouter'));
 app.use('/bill/api/vendedores/productos', require('./routes/productosRouter'));
 app.use('/bill/api/vendedores/tasas', require('./routes/tasasRouter'));
+app.use('/bill/api/vendedores/bancos', require('./routes/bancosRouter'));
+app.use('/bill/api/vendedores/comisiones', require('./routes/comisionesRouter'));
 app.use('/bill/api/vendedores/admin', require('./routes/adminRouter'));
 app.use('/bill/api/vendedores', require('./routes/vendedoresRouter'));
 

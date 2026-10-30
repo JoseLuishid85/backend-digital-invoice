@@ -1,32 +1,24 @@
-const { HOJAS, leerHojas } = require('../services/googleSheetsService');
+const { HOJAS, leerHojas, actualizarFila, conBloqueo } = require('../services/googleSheetsService');
+const { registrarLog } = require('../services/historialService');
+const { formatearPago } = require('../utils/cobros');
+const { enviarComprobante } = require('../utils/comprobantes');
 const {
     redondear,
     sumar,
     mismoId,
     aTexto,
-    esAdministrador,
-    usuarioActivo,
+    listaVendedores,
+    nombreVendedor,
     formatearDeuda,
     formatearVenta,
+    conCobros,
+    cobroDeVenta,
     masRecientePrimero,
     responderError,
 } = require('../utils/cartera');
 const { aFecha, fechaHoy } = require('../utils/valores');
 
 const LARGO_LISTAS = 5;
-
-// Vendedores de la hoja Usuarios (todos los que no son administradores), ordenados por nombre
-const listaVendedores = (usuarios) => usuarios
-    .filter((u) => !esAdministrador(u.nivel_acceso))
-    .map((u) => ({
-        id_vendedor: aTexto(u.id_usuario),
-        nombre: aTexto(u.nombre) || aTexto(u.email),
-        activo: usuarioActivo(u),
-    }))
-    .sort((a, b) => a.nombre.localeCompare(b.nombre, 'es'));
-
-const nombreVendedor = (vendedores, idVendedor) =>
-    vendedores.find((v) => mismoId(v.id_vendedor, idVendedor))?.nombre ?? aTexto(idVendedor);
 
 // Deuda con su vendedor: la hoja Deudas no lo guarda, sale del cliente
 const deudaConVendedor = (deuda, clientes, vendedores) => {
@@ -67,7 +59,7 @@ const obtenerResumenAdmin = async (req, res) => {
     const hoy = fechaHoy();
 
     try {
-        const hojas = await leerHojas(HOJAS.usuarios, HOJAS.clientes, HOJAS.deudas, HOJAS.pagos, HOJAS.ventas);
+        const hojas = await leerHojas(HOJAS.usuarios, HOJAS.clientes, HOJAS.deudas, HOJAS.pagos, HOJAS.ventas, HOJAS.pedidos);
         const vendedores = listaVendedores(hojas[HOJAS.usuarios].filas);
         const clientes = hojas[HOJAS.clientes].filas;
         const deudas = hojas[HOJAS.deudas].filas.map((d) => deudaConVendedor(d, clientes, vendedores));
@@ -75,7 +67,8 @@ const obtenerResumenAdmin = async (req, res) => {
         const ventas = hojas[HOJAS.ventas].filas;
 
         const porVerificar = pagos.filter((p) => (aTexto(p.estado_verificacion).toLowerCase() || 'pendiente') === 'pendiente');
-        const porEntregar = ventas.filter((v) => aTexto(v.estado_entrega).toLowerCase() !== 'entregada');
+        const porEntregar = hojas[HOJAS.pedidos].filas
+            .filter((p) => (aTexto(p.estado).toLowerCase() || 'pendiente') === 'pendiente');
 
         const porVendedor = vendedores.map((vendedor) => {
             const suyo = (fila) => mismoId(fila.id_vendedor, vendedor.id_vendedor);
@@ -124,7 +117,9 @@ const listarVentasAdmin = async (req, res) => {
     const hasta = aFecha(req.query.hasta);
 
     try {
-        const hojas = await leerHojas(HOJAS.usuarios, HOJAS.clientes, HOJAS.ventas, HOJAS.ventasDetalle);
+        const hojas = await leerHojas(
+            HOJAS.usuarios, HOJAS.clientes, HOJAS.ventas, HOJAS.ventasDetalle, HOJAS.deudas, HOJAS.pagos,
+        );
         const vendedores = listaVendedores(hojas[HOJAS.usuarios].filas);
         const clientes = hojas[HOJAS.clientes].filas;
         const detalles = hojas[HOJAS.ventasDetalle].filas;
@@ -135,7 +130,10 @@ const listarVentasAdmin = async (req, res) => {
             .filter((v) => !desde || aTexto(v.fecha_venta) >= desde)
             .filter((v) => !hasta || aTexto(v.fecha_venta) <= hasta)
             .sort(masRecientePrimero('fecha_venta', 'id_venta'))
-            .map((v) => ventaConVendedor(v, clientes, detalles, vendedores));
+            .map((v) => ({
+                ...ventaConVendedor(v, clientes, detalles, vendedores),
+                cobro: cobroDeVenta(v, hojas[HOJAS.deudas].filas, hojas[HOJAS.pagos].filas),
+            }));
 
         const total = redondear(ventas.reduce((suma, v) => suma + v.monto_total, 0));
         return res.json({ ok: true, total, ventas, vendedores });
@@ -151,13 +149,13 @@ const listarDeudasAdmin = async (req, res) => {
     const estado = aTexto(req.query.estado).toLowerCase();
 
     try {
-        const hojas = await leerHojas(HOJAS.usuarios, HOJAS.clientes, HOJAS.deudas);
+        const hojas = await leerHojas(HOJAS.usuarios, HOJAS.clientes, HOJAS.deudas, HOJAS.pagos);
         const vendedores = listaVendedores(hojas[HOJAS.usuarios].filas);
         const clientes = hojas[HOJAS.clientes].filas;
 
         const deudas = hojas[HOJAS.deudas].filas
             .filter((d) => !estado || aTexto(d.estado).toLowerCase() === estado)
-            .map((d) => deudaConVendedor(d, clientes, vendedores))
+            .map((d) => conCobros(deudaConVendedor(d, clientes, vendedores), hojas[HOJAS.pagos].filas))
             .filter((d) => !idVendedor || mismoId(d.id_vendedor, idVendedor));
 
         const totalPendiente = redondear(deudas.reduce((suma, d) => suma + d.monto_pendiente, 0));
@@ -167,4 +165,103 @@ const listarDeudasAdmin = async (req, res) => {
     }
 };
 
-module.exports = { obtenerResumenAdmin, listarVentasAdmin, listarDeudasAdmin };
+// Estados de estado_verificacion en la hoja Pagos (vacío cuenta como pendiente)
+const ESTADOS_VERIFICACION = ['pendiente', 'verificado', 'rechazado'];
+
+// Pago con su vendedor (sale del cliente) y la factura que paga (de la deuda o, si fue de contado, de la venta)
+const pagoConVendedor = (pago, { clientes, deudas, ventas }, vendedores) => {
+    const idVendedor = aTexto(clientes.find((c) => mismoId(c.id_cliente, pago.id_cliente))?.id_vendedor);
+    const documento = pago.id_deuda
+        ? deudas.find((d) => mismoId(d.id_deuda, pago.id_deuda))
+        : ventas.find((v) => mismoId(v.id_venta, pago.id_venta));
+    return {
+        ...formatearPago(pago, clientes),
+        numero_factura: aTexto(documento?.numero_factura),
+        id_vendedor: idVendedor,
+        vendedor_nombre: nombreVendedor(vendedores, idVendedor),
+    };
+};
+
+// GET /bill/api/vendedores/admin/pagos?estado=pendiente|verificado|rechazado&id_vendedor=
+// Pagos de todos los vendedores (o de uno) para verificarlos. Incluye la lista de vendedores para el filtro.
+const listarPagosAdmin = async (req, res) => {
+    const idVendedor = aTexto(req.query.id_vendedor);
+    const estado = aTexto(req.query.estado).toLowerCase();
+    if (estado && !ESTADOS_VERIFICACION.includes(estado)) {
+        return res.status(400).json({ ok: false, mensaje: `El estado debe ser ${ESTADOS_VERIFICACION.join(', ')}.` });
+    }
+
+    try {
+        const hojas = await leerHojas(HOJAS.usuarios, HOJAS.clientes, HOJAS.pagos, HOJAS.deudas, HOJAS.ventas);
+        const vendedores = listaVendedores(hojas[HOJAS.usuarios].filas);
+        const relacionadas = {
+            clientes: hojas[HOJAS.clientes].filas,
+            deudas: hojas[HOJAS.deudas].filas,
+            ventas: hojas[HOJAS.ventas].filas,
+        };
+
+        const pagos = hojas[HOJAS.pagos].filas
+            .sort(masRecientePrimero('fecha_pago', 'id_pago'))
+            .map((p) => pagoConVendedor(p, relacionadas, vendedores))
+            .filter((p) => !estado || p.estado_verificacion === estado)
+            .filter((p) => !idVendedor || mismoId(p.id_vendedor, idVendedor));
+
+        const total = redondear(pagos.reduce((suma, p) => suma + p.monto, 0));
+        return res.json({ ok: true, total, pagos, vendedores });
+    } catch (error) {
+        return responderError(res, error, 'Error al obtener los pagos');
+    }
+};
+
+// GET /bill/api/vendedores/admin/pagos/:id/comprobante  (foto o PDF de cualquier pago)
+const obtenerComprobanteAdmin = async (req, res) => {
+    try {
+        const pago = (await leerHojas(HOJAS.pagos))[HOJAS.pagos].filas.find((p) => mismoId(p.id_pago, req.params.id));
+        if (!pago) return res.status(404).json({ ok: false, mensaje: 'Pago no encontrado.' });
+        return enviarComprobante(res, pago);
+    } catch (error) {
+        return responderError(res, error, 'Error al obtener el comprobante');
+    }
+};
+
+// PATCH /bill/api/vendedores/admin/pagos/:id/verificacion  (JSON: { estado: 'verificado' })
+// Cambia estado_verificacion del pago. No toca la deuda: el abono ya se descontó al registrarse.
+const verificarPago = async (req, res) => {
+    const estado = aTexto(req.body?.estado).toLowerCase() || 'verificado';
+    if (!ESTADOS_VERIFICACION.includes(estado)) {
+        return res.status(400).json({ ok: false, mensaje: `El estado debe ser ${ESTADOS_VERIFICACION.join(', ')}.` });
+    }
+
+    try {
+        const resultado = await conBloqueo(async () => {
+            const hojas = await leerHojas(HOJAS.usuarios, HOJAS.clientes, HOJAS.pagos, HOJAS.deudas, HOJAS.ventas);
+            const { encabezados, filas } = hojas[HOJAS.pagos];
+            const pago = filas.find((p) => mismoId(p.id_pago, req.params.id));
+            if (!pago) return { status: 404, mensaje: 'Pago no encontrado.' };
+
+            await actualizarFila(HOJAS.pagos, pago._fila, { estado_verificacion: estado }, encabezados);
+            return {
+                pago: pagoConVendedor({ ...pago, estado_verificacion: estado }, {
+                    clientes: hojas[HOJAS.clientes].filas,
+                    deudas: hojas[HOJAS.deudas].filas,
+                    ventas: hojas[HOJAS.ventas].filas,
+                }, listaVendedores(hojas[HOJAS.usuarios].filas)),
+            };
+        });
+        if (resultado.status) return res.status(resultado.status).json({ ok: false, mensaje: resultado.mensaje });
+
+        registrarLog(req.vendedor.id_vendedor, 'verificar_pago', { id_pago: resultado.pago.id_pago, estado });
+        return res.json({ ok: true, mensaje: 'Pago actualizado.', pago: resultado.pago });
+    } catch (error) {
+        return responderError(res, error, 'Error al verificar el pago');
+    }
+};
+
+module.exports = {
+    obtenerResumenAdmin,
+    listarVentasAdmin,
+    listarDeudasAdmin,
+    listarPagosAdmin,
+    obtenerComprobanteAdmin,
+    verificarPago,
+};

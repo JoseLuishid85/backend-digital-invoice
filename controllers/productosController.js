@@ -1,19 +1,23 @@
 const { HOJAS, leerHoja, agregarFila, actualizarFila, eliminarFila, siguienteId, conBloqueo } = require('../services/googleSheetsService');
 const { registrarLog } = require('../services/historialService');
-const { aMonto, aMontoOpcional, redondear, mismoId, aTexto, PLAZOS_CREDITO, columnaPrecio, responderError } = require('../utils/cartera');
+const { aMonto, aMontoOpcional, redondear, mismoId, aTexto, TRAMOS_COBRO, columnaTramo, responderError } = require('../utils/cartera');
+const { COLUMNAS_COMISION } = require('../utils/comisiones');
 
 // En la hoja el estado se escribe con mayúscula inicial (Activo / Inactivo)
 const ESTADOS_PRODUCTO = { activo: 'Activo', inactivo: 'Inactivo' };
 
-// Columnas de los precios a crédito: precio_7, precio_15, precio_30 (precio es el de contado)
-const COLUMNAS_PLAZO = PLAZOS_CREDITO.map(columnaPrecio);
+// Columnas de los precios al cobrar: precio_contado, precio_7, precio_15, precio_30 (precio es el de factura)
+const COLUMNAS_PLAZO = TRAMOS_COBRO.map(columnaTramo);
+const nombreColumna = (i) => (TRAMOS_COBRO[i] ? `a ${TRAMOS_COBRO[i]} días` : 'de contado');
+const MAXIMO_COMISION = 100;
 
 // Producto listo para responder: precios y stock como número, sin el número de fila.
-// Un precio a crédito sin definir es null (al vender se usa el de contado).
+// Un precio de cobro sin definir es null (al cobrar se usa el de factura, sin descuento).
 const formatearProducto = ({ _fila, ...producto }) => ({
     ...producto,
     precio: aMonto(producto.precio),
     ...Object.fromEntries(COLUMNAS_PLAZO.map((col) => [col, aMontoOpcional(producto[col])])),
+    ...Object.fromEntries(COLUMNAS_COMISION.map((col) => [col, aMontoOpcional(producto[col])])),
     stock: aMonto(producto.stock),
 });
 
@@ -25,14 +29,28 @@ const leerNumero = (valor, vacio = null) => {
     return Number.isFinite(n) && n >= 0 ? n : null;
 };
 
-// Lee los precios a crédito que vengan en el body: { cambios } (vacío = sin precio) o { error }
+// Lee los precios de cobro que vengan en el body: { cambios } (vacío = sin precio) o { error }
 const leerPreciosPlazo = (cuerpo, soloLosEnviados) => {
     const cambios = {};
     for (const [i, col] of COLUMNAS_PLAZO.entries()) {
         if (soloLosEnviados && !(col in cuerpo)) continue;
         const valor = leerNumero(cuerpo[col], '');
         if (valor === null) {
-            return { error: `El precio a ${PLAZOS_CREDITO[i]} días debe ser un número mayor o igual a 0.` };
+            return { error: `El precio ${nombreColumna(i)} debe ser un número mayor o igual a 0.` };
+        }
+        cambios[col] = valor === '' ? '' : redondear(valor);
+    }
+    return { cambios };
+};
+
+// Lee los % de comisión por tramo que vengan en el body (0 a 100; vacío = sin comisión): { cambios } o { error }
+const leerComisiones = (cuerpo, soloLosEnviados) => {
+    const cambios = {};
+    for (const [i, col] of COLUMNAS_COMISION.entries()) {
+        if (soloLosEnviados && !(col in cuerpo)) continue;
+        const valor = leerNumero(cuerpo[col], '');
+        if (valor === null || valor > MAXIMO_COMISION) {
+            return { error: `La comisión ${nombreColumna(i)} debe ser un porcentaje entre 0 y ${MAXIMO_COMISION}.` };
         }
         cambios[col] = valor === '' ? '' : redondear(valor);
     }
@@ -75,12 +93,14 @@ const obtenerProducto = async (req, res) => {
 };
 
 // POST /bill/api/vendedores/productos
-// body JSON: { nombre, precio, precio_7?, precio_15?, precio_30?, descripcion?, stock? }
+// body JSON: { nombre, precio, precio_contado?, precio_7?, precio_15?, precio_30?, comision_contado?, comision_7?,
+//             comision_15?, comision_30? (%), descripcion?, stock? }
 const crearProducto = async (req, res) => {
     const nombre = aTexto(req.body?.nombre);
     const precio = leerNumero(req.body?.precio);
     const stock = leerNumero(req.body?.stock, 0);
     const preciosPlazo = leerPreciosPlazo(req.body || {}, false);
+    const comisiones = leerComisiones(req.body || {}, false);
 
     if (!nombre) {
         return res.status(400).json({ ok: false, mensaje: 'El nombre del producto es obligatorio.' });
@@ -91,8 +111,8 @@ const crearProducto = async (req, res) => {
     if (stock === null) {
         return res.status(400).json({ ok: false, mensaje: 'El stock debe ser un número mayor o igual a 0.' });
     }
-    if (preciosPlazo.error) {
-        return res.status(400).json({ ok: false, mensaje: preciosPlazo.error });
+    if (preciosPlazo.error || comisiones.error) {
+        return res.status(400).json({ ok: false, mensaje: preciosPlazo.error || comisiones.error });
     }
 
     try {
@@ -106,6 +126,7 @@ const crearProducto = async (req, res) => {
                 descripcion: aTexto(req.body?.descripcion),
                 precio: redondear(precio),
                 ...preciosPlazo.cambios,
+                ...comisiones.cambios,
                 stock,
                 estado: ESTADOS_PRODUCTO.activo,
             }, encabezados);
@@ -123,7 +144,8 @@ const crearProducto = async (req, res) => {
 };
 
 // PUT /bill/api/vendedores/productos/:id
-// body JSON: { nombre?, descripcion?, precio?, precio_7?, precio_15?, precio_30?, stock?, estado? }
+// body JSON: { nombre?, descripcion?, precio?, precio_contado?, precio_7?, precio_15?, precio_30?, comision_contado?,
+//             comision_7?, comision_15?, comision_30?, stock?, estado? }
 // Solo cambia los campos que vienen en el body.
 const actualizarProducto = async (req, res) => {
     const idProducto = aTexto(req.params.id);
@@ -148,6 +170,11 @@ const actualizarProducto = async (req, res) => {
         return res.status(400).json({ ok: false, mensaje: preciosPlazo.error });
     }
     Object.assign(cambios, preciosPlazo.cambios);
+    const comisiones = leerComisiones(cuerpo, true);
+    if (comisiones.error) {
+        return res.status(400).json({ ok: false, mensaje: comisiones.error });
+    }
+    Object.assign(cambios, comisiones.cambios);
     if ('stock' in cuerpo) {
         cambios.stock = leerNumero(cuerpo.stock, 0);
         if (cambios.stock === null) {

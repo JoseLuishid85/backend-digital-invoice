@@ -1,4 +1,5 @@
 const crypto = require('crypto');
+const { existsSync } = require('fs');
 const fs = require('fs/promises');
 const path = require('path');
 
@@ -43,4 +44,16 @@ const guardarComprobantes = async (porLinea) => {
 
 const rutaComprobante = (nombre) => path.join(CARPETA_COMPROBANTES, path.basename(nombre));
 
-module.exports = { comprobantesPorLinea, guardarComprobantes, borrarComprobantes, rutaComprobante };
+// Responde con el archivo del comprobante de una fila de Pagos (404 si no tiene o si el archivo no está)
+const enviarComprobante = (res, pago) => {
+    const nombre = String(pago.comprobante_url ?? '').trim();
+    if (!nombre) return res.status(404).json({ ok: false, mensaje: 'Este pago no tiene comprobante.' });
+
+    const ruta = rutaComprobante(nombre);
+    if (!existsSync(ruta)) {
+        return res.status(404).json({ ok: false, mensaje: 'No se encontró el archivo del comprobante.' });
+    }
+    return res.sendFile(ruta);
+};
+
+module.exports = { comprobantesPorLinea, guardarComprobantes, borrarComprobantes, rutaComprobante, enviarComprobante };

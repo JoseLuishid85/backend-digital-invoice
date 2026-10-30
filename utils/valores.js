@@ -31,4 +31,13 @@ const sumarDias = (fecha, dias) => {
     return new Date(Date.UTC(anio, mes - 1, dia + dias)).toISOString().slice(0, 10);
 };
 
-module.exports = { aNumero, aNumeroOpcional, aFecha, fechaHoy, sumarDias };
+// Días de una fecha YYYY-MM-DD a otra (negativo si hasta es anterior)
+const diasEntre = (desde, hasta) => {
+    const aUtc = (fecha) => {
+        const [anio, mes, dia] = fecha.split('-').map(Number);
+        return Date.UTC(anio, mes - 1, dia);
+    };
+    return Math.round((aUtc(hasta) - aUtc(desde)) / 86400000);
+};
+
+module.exports = { aNumero, aNumeroOpcional, aFecha, fechaHoy, sumarDias, diasEntre };

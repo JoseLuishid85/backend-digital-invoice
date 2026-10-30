@@ -2,14 +2,14 @@ const { aMonto, aMontoOpcional, redondear, mismoId, aTexto } = require('./carter
 const { tasaDelDia, redondearTasa } = require('./tasaDolar');
 const { aNumeroOpcional } = require('./valores');
 
-// Formas de pago. moneda: en qué se recibe el monto (USD = dólares, VES = bolívares).
-// En la hoja Pagos se escribe la etiqueta. Duplicadas en frontend-vendedor/src/utils/pagos.js.
+// Formas de pago. moneda: en qué se recibe el monto (USD = dólares, VES = bolívares). conBanco: hay que
+// indicar el banco (de la hoja Bancos). En la hoja Pagos se escribe la etiqueta. Duplicadas en frontend-vendedor/src/utils/pagos.js.
 const METODOS_PAGO = [
     { valor: 'EFECTIVO_USD', etiqueta: 'Efectivo $', moneda: 'USD' },
     { valor: 'ZELLE', etiqueta: 'Zelle', moneda: 'USD' },
     { valor: 'EFECTIVO_BS', etiqueta: 'Efectivo Bs', moneda: 'VES' },
-    { valor: 'PAGO_MOVIL', etiqueta: 'Pago móvil', moneda: 'VES' },
-    { valor: 'TRANSFERENCIA', etiqueta: 'Transferencia', moneda: 'VES' },
+    { valor: 'PAGO_MOVIL', etiqueta: 'Pago móvil', moneda: 'VES', conBanco: true },
+    { valor: 'TRANSFERENCIA', etiqueta: 'Transferencia', moneda: 'VES', conBanco: true },
     { valor: 'PUNTO', etiqueta: 'Punto de venta', moneda: 'VES' },
 ];
 
@@ -32,9 +32,19 @@ const leerDatos = (req) => {
 // ¿Alguna forma de pago es en bolívares? (entonces hace falta la tasa)
 const hayBolivares = (lista) => Array.isArray(lista) && lista.some((l) => buscarMetodo(l?.metodo)?.moneda === 'VES');
 
-// Valida las formas de pago: [{ metodo, monto, referencia? }] (monto en la moneda del método).
-// Devuelve { lineas, totalUsd } (total sin redondear) o { error }.
-const leerLineasPago = (lista, tasa) => {
+// ¿Alguna forma de pago necesita banco? (entonces hay que leer la hoja Bancos)
+const hayBancos = (lista) => Array.isArray(lista) && lista.some((l) => buscarMetodo(l?.metodo)?.conBanco);
+
+// Banco activo de la hoja Bancos por id_banco (estado vacío cuenta como activo)
+const bancoActivo = (bancos, idBanco) => bancos.find((b) =>
+    mismoId(b.id_banco, idBanco) && ['', 'activo'].includes(aTexto(b.estado).toLowerCase()));
+
+// Texto que se guarda en la columna banco de Pagos: "0102 - Banco de Venezuela"
+const nombreBanco = (banco) => [aTexto(banco.cod_banco), aTexto(banco.nombre)].filter(Boolean).join(' - ');
+
+// Valida las formas de pago: [{ metodo, monto, referencia?, banco? }] (monto en la moneda del método;
+// banco = id_banco, obligatorio en pago móvil y transferencia). Devuelve { lineas, totalUsd } (total sin redondear) o { error }.
+const leerLineasPago = (lista, tasa, bancos = []) => {
     if (!Array.isArray(lista) || !lista.length) return { error: 'Agrega al menos una forma de pago.' };
     if (lista.length > MAXIMO_LINEAS) return { error: `Se admiten como máximo ${MAXIMO_LINEAS} formas de pago.` };
 
@@ -46,11 +56,18 @@ const leerLineasPago = (lista, tasa) => {
         if (!monto) return { error: `El monto de ${metodo.etiqueta} debe ser mayor que 0.` };
         const enBolivares = metodo.moneda === 'VES';
         if (enBolivares && !(tasa > 0)) return { error: 'Falta la tasa del dólar para los pagos en bolívares.' };
+        let banco = '';
+        if (metodo.conBanco) {
+            const elegido = bancoActivo(bancos, linea?.banco);
+            if (!elegido) return { error: `Elige el banco de ${metodo.etiqueta} (línea ${i + 1}).` };
+            banco = nombreBanco(elegido);
+        }
 
         lineas.push({
             linea: i,
             metodo,
             referencia: aTexto(linea?.referencia),
+            banco,
             monto_bs: enBolivares ? redondear(monto) : null,
             usd: enBolivares ? monto / tasa : monto,
         });
@@ -77,6 +94,7 @@ const filasPago = (lineas, { ids, comprobantes, tasa, ...comunes }) => lineas.ma
     monto_bs: l.monto_bs ?? '',
     tasa_bcv: l.monto_bs !== null ? tasa : '',
     metodo_pago: l.metodo.etiqueta,
+    banco: l.banco ?? '',
     referencia: l.referencia,
     comprobante_url: comprobantes[l.linea] ?? '',
     estado_verificacion: 'pendiente',
@@ -91,6 +109,9 @@ const formatearPago = ({ _fila, comprobante_url: comprobanteUrl, ...pago }, clie
     monto: aMonto(pago.monto),
     monto_bs: aMontoOpcional(pago.monto_bs),
     tasa_bcv: aMontoOpcional(pago.tasa_bcv),
+    plazo_dias: aMontoOpcional(pago.plazo_dias),
+    monto_factura: aMontoOpcional(pago.monto_factura),
+    descuento: aMontoOpcional(pago.descuento),
     estado_verificacion: aTexto(pago.estado_verificacion).toLowerCase() || 'pendiente',
     comprobante: Boolean(aTexto(comprobanteUrl)),
     cliente_nombre: clientes.find((c) => mismoId(c.id_cliente, pago.id_cliente))?.nombre_comercial ?? '',
@@ -113,6 +134,7 @@ module.exports = {
     METODOS_PAGO,
     TOLERANCIA_USD,
     leerDatos,
+    hayBancos,
     leerLineasPago,
     repartirUsd,
     filasPago,

@@ -5,7 +5,7 @@ const {
     aTexto,
     clientesDelVendedor,
     formatearDeuda,
-    formatearVenta,
+    formatearPedido,
     responderError,
 } = require('../utils/cartera');
 const { fechaHoy } = require('../utils/valores');
@@ -13,13 +13,15 @@ const { fechaHoy } = require('../utils/valores');
 const LARGO_LISTAS = 5;
 
 // GET /bill/api/vendedores/resumen
-// Cifras de la pantalla de inicio del vendedor: ventas, cobros, saldo por cobrar y entregas pendientes
+// Cifras de la pantalla de inicio del vendedor: ventas, cobros, saldo por cobrar y pedidos por entregar
 const obtenerResumen = async (req, res) => {
     const hoy = fechaHoy();
     const mes = hoy.slice(0, 7);
 
     try {
-        const hojas = await leerHojas(HOJAS.clientes, HOJAS.deudas, HOJAS.pagos, HOJAS.ventas, HOJAS.ventasDetalle);
+        const hojas = await leerHojas(
+            HOJAS.clientes, HOJAS.deudas, HOJAS.pagos, HOJAS.ventas, HOJAS.pedidos, HOJAS.pedidosDetalle,
+        );
         const clientes = clientesDelVendedor(hojas[HOJAS.clientes].filas, req.vendedor.id_vendedor);
         const deCliente = (fila) => clientes.some((c) => mismoId(c.id_cliente, fila.id_cliente));
 
@@ -30,7 +32,10 @@ const obtenerResumen = async (req, res) => {
         const ventasHoy = ventas.filter((v) => aTexto(v.fecha_venta) === hoy);
         const ventasMes = ventas.filter((v) => aTexto(v.fecha_venta).startsWith(mes));
         const vencidas = deudas.filter((d) => d.vencida);
-        const porEntregar = ventas.filter((v) => aTexto(v.estado_entrega).toLowerCase() !== 'entregada');
+        const porEntregar = hojas[HOJAS.pedidos].filas
+            .filter((p) => mismoId(p.id_vendedor, req.vendedor.id_vendedor))
+            .map((p) => formatearPedido(p, clientes, hojas[HOJAS.pedidosDetalle].filas))
+            .filter((p) => p.estado === 'pendiente');
 
         return res.json({
             ok: true,
@@ -45,9 +50,8 @@ const obtenerResumen = async (req, res) => {
             },
             // Las más antiguas primero: son las más urgentes
             entregas_pendientes: porEntregar
-                .sort((a, b) => aTexto(a.fecha_venta).localeCompare(aTexto(b.fecha_venta)))
-                .slice(0, LARGO_LISTAS)
-                .map((v) => formatearVenta(v, clientes, hojas[HOJAS.ventasDetalle].filas)),
+                .sort((a, b) => aTexto(a.fecha_pedido).localeCompare(aTexto(b.fecha_pedido)))
+                .slice(0, LARGO_LISTAS),
             deudas_vencidas: vencidas
                 .sort((a, b) => aTexto(a.fecha_vencimiento).localeCompare(aTexto(b.fecha_vencimiento)))
                 .slice(0, LARGO_LISTAS),

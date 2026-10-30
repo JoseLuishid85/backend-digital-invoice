@@ -8,8 +8,14 @@ const HOJAS = {
     pagos: 'Pagos',
     ventas: 'Ventas',
     ventasDetalle: 'Ventas_Detalle',
+    pedidos: 'Pedidos',
+    pedidosDetalle: 'Pedidos_Detalle',
     productos: 'Productos',
+    bancos: 'Bancos',
     tasas: 'Tasas_Dolar',
+    metas: 'Metas', // meta de cobro y sueldo base de cada vendedor por mes
+    comisiones: 'Comisiones', // liquidación de cada vendedor por mes
+    comisionesDetalle: 'Comisiones_Detalle', // de qué pago y producto sale cada comisión
     logs: 'Historial_Logs',
 };
 
@@ -194,24 +200,30 @@ const eliminarFila = async (hoja, numeroFila) => {
     });
 };
 
-// Actualiza solo las celdas indicadas en `cambios` de una fila (no toca fórmulas ni formatos del resto)
-const actualizarFila = async (hoja, numeroFila, cambios, encabezados) => {
+// Actualiza solo las celdas indicadas de varias filas en una sola llamada (no toca fórmulas ni formatos del resto).
+// cambiosPorFila: [{ fila, cambios }]
+const actualizarFilas = async (hoja, cambiosPorFila, encabezados) => {
+    if (!cambiosPorFila.length) return;
     const sheets = obtenerCliente();
     const columnas = encabezados || (await leerHoja(hoja)).encabezados;
 
-    const data = Object.entries(cambios).map(([clave, valor]) => {
+    const data = cambiosPorFila.flatMap(({ fila, cambios }) => Object.entries(cambios).map(([clave, valor]) => {
         const indice = columnas.indexOf(clave);
         if (indice === -1) {
             throw errorConStatus(`La hoja "${hoja}" no tiene la columna "${clave}".`, 500);
         }
-        return { range: rangoHoja(hoja, `${letraColumna(indice)}${numeroFila}`), values: [[valor]] };
-    });
+        return { range: rangoHoja(hoja, `${letraColumna(indice)}${fila}`), values: [[valor]] };
+    }));
 
     await sheets.spreadsheets.values.batchUpdate({
         spreadsheetId: process.env.GOOGLE_SHEETS_ID,
         requestBody: { valueInputOption: 'RAW', data },
     });
 };
+
+// Actualiza solo las celdas indicadas en `cambios` de una fila
+const actualizarFila = (hoja, numeroFila, cambios, encabezados) =>
+    actualizarFilas(hoja, [{ fila: numeroFila, cambios }], encabezados);
 
 // Actualiza la primera fila que cumpla el criterio. Devuelve la fila actualizada o null.
 const actualizarFilaDonde = async (hoja, criterio, cambios) => {
@@ -248,6 +260,15 @@ const updateRow = (sheetName, rowNumber, changes) => actualizarFila(sheetName, r
 // Actualiza la primera fila que cumpla el criterio; devuelve la fila actualizada o null
 const updateRowWhere = (sheetName, criteria, changes) => actualizarFilaDonde(sheetName, criteria, changes);
 
+// agregarFilas deja fuera, sin avisar, las claves que no son columnas de la hoja: esto lo convierte en un error
+// claro antes de escribir. columnas: nombres o un objeto (se usan sus claves).
+const exigirColumnas = (hoja, encabezados, columnas) => {
+    const faltan = (Array.isArray(columnas) ? columnas : Object.keys(columnas)).filter((c) => !encabezados.includes(c));
+    if (faltan.length) {
+        throw errorConStatus(`La hoja "${hoja}" no tiene las columnas: ${faltan.join(', ')}. Agrégalas al encabezado.`, 500);
+    }
+};
+
 // Siguiente ID con prefijo y 3 dígitos mínimo: CLI-001, CLI-002...
 const siguienteId = (filas, campo, prefijo) => {
     const patron = new RegExp(`^${prefijo}-(\\d+)$`);
@@ -283,7 +304,9 @@ module.exports = {
     limpiarFilas,
     eliminarFila,
     actualizarFila,
+    actualizarFilas,
     actualizarFilaDonde,
+    exigirColumnas,
     siguienteId,
     siguientesIds,
     conBloqueo,
