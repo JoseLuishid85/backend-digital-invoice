@@ -17,6 +17,7 @@ const {
     guardarMeta,
 } = require('../controllers/comisionesController');
 const { consultarVentasAdmin } = require('../controllers/consultasController');
+const { listarClientesAdmin, obtenerHistorialAdmin } = require('../controllers/clientesController');
 
 // Consultas del administrador sobre todos los vendedores (nivel_acceso Administrador en la hoja Usuarios)
 const router = Router();
@@ -27,6 +28,12 @@ router.get('/resumen', soloAdministrador, obtenerResumenAdmin);
 
 // GET /bill/api/vendedores/admin/ventas?id_vendedor=&tipo_pago=&desde=&hasta=
 router.get('/ventas', soloAdministrador, listarVentasAdmin);
+
+// GET /bill/api/vendedores/admin/clientes?id_vendedor=
+router.get('/clientes', soloAdministrador, listarClientesAdmin);
+
+// GET /bill/api/vendedores/admin/clientes/:id/historial
+router.get('/clientes/:id/historial', soloAdministrador, obtenerHistorialAdmin);
 
 // GET /bill/api/vendedores/admin/deudas?id_vendedor=&estado=
 router.get('/deudas', soloAdministrador, listarDeudasAdmin);

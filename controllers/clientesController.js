@@ -1,6 +1,9 @@
 const { HOJAS, leerHoja, leerHojas, agregarFila, actualizarFila, siguienteId, conBloqueo } = require('../services/googleSheetsService');
 const { registrarLog } = require('../services/historialService');
-const { aMonto, aTexto, mismoId, clientesDelVendedor, saldoCliente, responderError } = require('../utils/cartera');
+const {
+    aMonto, aTexto, mismoId, clientesDelVendedor, saldoCliente, listaVendedores, nombreVendedor, responderError,
+} = require('../utils/cartera');
+const { historialDeCliente } = require('../utils/historialCliente');
 const { fechaHoy } = require('../utils/valores');
 
 const ESTADOS_CLIENTE = ['activo', 'inactivo'];
@@ -144,4 +147,79 @@ const actualizarCliente = async (req, res) => {
     }
 };
 
-module.exports = { listarClientes, crearCliente, actualizarCliente };
+// GET /bill/api/vendedores/clientes/:id/historial  (solo un cliente del vendedor logueado)
+// Estado de cuenta y responsabilidad de pago: { cliente, resumen, calificacion, deudas, movimientos }
+const obtenerHistorial = async (req, res) => {
+    try {
+        const hojas = await leerHojas(HOJAS.clientes, HOJAS.deudas, HOJAS.pagos, HOJAS.ventas);
+        const cliente = clientesDelVendedor(hojas[HOJAS.clientes].filas, req.vendedor.id_vendedor)
+            .find((c) => mismoId(c.id_cliente, req.params.id));
+        if (!cliente) return res.status(404).json({ ok: false, mensaje: 'Cliente no encontrado.' });
+
+        return res.json({
+            ok: true,
+            cliente: formatearCliente(cliente, hojas[HOJAS.deudas].filas),
+            ...historialDeCliente(cliente, {
+                deudas: hojas[HOJAS.deudas].filas,
+                pagos: hojas[HOJAS.pagos].filas,
+                ventas: hojas[HOJAS.ventas].filas,
+            }),
+        });
+    } catch (error) {
+        return responderError(res, error, 'Error al obtener el historial del cliente');
+    }
+};
+
+// GET /bill/api/vendedores/admin/clientes?id_vendedor=  (clientes de todos los vendedores o de uno)
+// Cada cliente trae saldo_pendiente y vendedor_nombre; incluye la lista de vendedores para el filtro.
+const listarClientesAdmin = async (req, res) => {
+    const idVendedor = aTexto(req.query.id_vendedor);
+
+    try {
+        const hojas = await leerHojas(HOJAS.usuarios, HOJAS.clientes, HOJAS.deudas);
+        const vendedores = listaVendedores(hojas[HOJAS.usuarios].filas);
+        const deudas = hojas[HOJAS.deudas].filas;
+        const clientes = hojas[HOJAS.clientes].filas
+            .filter((c) => !idVendedor || mismoId(c.id_vendedor, idVendedor))
+            .map((c) => ({ ...formatearCliente(c, deudas), vendedor_nombre: nombreVendedor(vendedores, c.id_vendedor) }))
+            .sort((a, b) => aTexto(a.nombre_comercial).localeCompare(aTexto(b.nombre_comercial), 'es'));
+
+        return res.json({ ok: true, clientes, vendedores });
+    } catch (error) {
+        return responderError(res, error, 'Error al obtener los clientes');
+    }
+};
+
+// GET /bill/api/vendedores/admin/clientes/:id/historial  (cualquier cliente)
+const obtenerHistorialAdmin = async (req, res) => {
+    try {
+        const hojas = await leerHojas(HOJAS.usuarios, HOJAS.clientes, HOJAS.deudas, HOJAS.pagos, HOJAS.ventas);
+        const cliente = hojas[HOJAS.clientes].filas.find((c) => mismoId(c.id_cliente, req.params.id));
+        if (!cliente) return res.status(404).json({ ok: false, mensaje: 'Cliente no encontrado.' });
+
+        const vendedores = listaVendedores(hojas[HOJAS.usuarios].filas);
+        return res.json({
+            ok: true,
+            cliente: {
+                ...formatearCliente(cliente, hojas[HOJAS.deudas].filas),
+                vendedor_nombre: nombreVendedor(vendedores, cliente.id_vendedor),
+            },
+            ...historialDeCliente(cliente, {
+                deudas: hojas[HOJAS.deudas].filas,
+                pagos: hojas[HOJAS.pagos].filas,
+                ventas: hojas[HOJAS.ventas].filas,
+            }),
+        });
+    } catch (error) {
+        return responderError(res, error, 'Error al obtener el historial del cliente');
+    }
+};
+
+module.exports = {
+    listarClientes,
+    crearCliente,
+    actualizarCliente,
+    obtenerHistorial,
+    listarClientesAdmin,
+    obtenerHistorialAdmin,
+};

@@ -1,6 +1,6 @@
 const { Router } = require('express');
 const { verificarTokenVendedor } = require('../middlewares/authVendedoresMiddleware');
-const { listarClientes, crearCliente, actualizarCliente } = require('../controllers/clientesController');
+const { listarClientes, crearCliente, actualizarCliente, obtenerHistorial } = require('../controllers/clientesController');
 
 // Clientes del vendedor logueado (hoja Clientes)
 const router = Router();
@@ -10,6 +10,9 @@ router.get('/', verificarTokenVendedor, listarClientes);
 
 // POST /bill/api/vendedores/clientes  (genera id_cliente CLI-001, CLI-002...)
 router.post('/', verificarTokenVendedor, crearCliente);
+
+// GET /bill/api/vendedores/clientes/:id/historial  (estado de cuenta y responsabilidad de pago)
+router.get('/:id/historial', verificarTokenVendedor, obtenerHistorial);
 
 // PUT /bill/api/vendedores/clientes/:id
 // body JSON: { nombre_comercial?, contacto_nombre?, telefono?, direccion?, limite_credito?, estado? }
