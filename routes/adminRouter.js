@@ -16,6 +16,7 @@ const {
     listarMetas,
     guardarMeta,
 } = require('../controllers/comisionesController');
+const { consultarVentasAdmin } = require('../controllers/consultasController');
 
 // Consultas del administrador sobre todos los vendedores (nivel_acceso Administrador en la hoja Usuarios)
 const router = Router();
@@ -56,5 +57,8 @@ router.get('/metas', soloAdministrador, listarMetas);
 
 // PUT /bill/api/vendedores/admin/metas  (JSON: { id_vendedor, periodo, meta_monto, sueldo_base, observaciones? })
 router.put('/metas', soloAdministrador, guardarMeta);
+
+// GET /bill/api/vendedores/admin/consultas/ventas?desde=&hasta=&agrupar=dia|semana|mes&id_vendedor=
+router.get('/consultas/ventas', soloAdministrador, consultarVentasAdmin);
 
 module.exports = router;

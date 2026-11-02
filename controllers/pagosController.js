@@ -30,8 +30,12 @@ const listarPagos = async (req, res) => {
     const idCliente = aTexto(req.query.id_cliente);
 
     try {
-        const hojas = await leerHojas(HOJAS.clientes, HOJAS.pagos);
+        const hojas = await leerHojas(HOJAS.clientes, HOJAS.pagos, HOJAS.deudas, HOJAS.ventas);
         const clientes = clientesDelVendedor(hojas[HOJAS.clientes].filas, req.vendedor.id_vendedor);
+        // Número de factura del pago: el de su deuda (abono) o el de su venta (contado)
+        const facturaDe = (p) => aTexto((p.id_deuda
+            ? hojas[HOJAS.deudas].filas.find((d) => mismoId(d.id_deuda, p.id_deuda))
+            : hojas[HOJAS.ventas].filas.find((v) => mismoId(v.id_venta, p.id_venta)))?.numero_factura);
 
         const pagos = hojas[HOJAS.pagos].filas
             .filter((p) => clientes.some((c) => mismoId(c.id_cliente, p.id_cliente)))
@@ -39,7 +43,7 @@ const listarPagos = async (req, res) => {
             .filter((p) => !idVenta || mismoId(p.id_venta, idVenta))
             .filter((p) => !idCliente || mismoId(p.id_cliente, idCliente))
             .sort(masRecientePrimero('fecha_pago', 'id_pago'))
-            .map((p) => formatearPago(p, clientes));
+            .map((p) => ({ ...formatearPago(p, clientes), numero_factura: facturaDe(p) }));
 
         return res.json({ ok: true, pagos });
     } catch (error) {
@@ -203,8 +207,12 @@ const registrarPago = async (req, res) => {
 // Envía la foto o el PDF del pago (solo de los clientes del vendedor logueado)
 const obtenerComprobante = async (req, res) => {
     try {
-        const hojas = await leerHojas(HOJAS.clientes, HOJAS.pagos);
+        const hojas = await leerHojas(HOJAS.clientes, HOJAS.pagos, HOJAS.deudas, HOJAS.ventas);
         const clientes = clientesDelVendedor(hojas[HOJAS.clientes].filas, req.vendedor.id_vendedor);
+        // Número de factura del pago: el de su deuda (abono) o el de su venta (contado)
+        const facturaDe = (p) => aTexto((p.id_deuda
+            ? hojas[HOJAS.deudas].filas.find((d) => mismoId(d.id_deuda, p.id_deuda))
+            : hojas[HOJAS.ventas].filas.find((v) => mismoId(v.id_venta, p.id_venta)))?.numero_factura);
         const pago = hojas[HOJAS.pagos].filas.find((p) =>
             mismoId(p.id_pago, req.params.id) && clientes.some((c) => mismoId(c.id_cliente, p.id_cliente)));
 

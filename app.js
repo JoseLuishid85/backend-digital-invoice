@@ -34,6 +34,7 @@ app.use('/bill/api/vendedores/productos', require('./routes/productosRouter'));
 app.use('/bill/api/vendedores/tasas', require('./routes/tasasRouter'));
 app.use('/bill/api/vendedores/bancos', require('./routes/bancosRouter'));
 app.use('/bill/api/vendedores/comisiones', require('./routes/comisionesRouter'));
+app.use('/bill/api/vendedores/consultas', require('./routes/consultasRouter'));
 app.use('/bill/api/vendedores/admin', require('./routes/adminRouter'));
 app.use('/bill/api/vendedores', require('./routes/vendedoresRouter'));
 
