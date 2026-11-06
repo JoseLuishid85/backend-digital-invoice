@@ -1,6 +1,5 @@
 const {
     HOJAS,
-    leerHoja,
     leerHojas,
     agregarFilas,
     actualizarFila,
@@ -13,8 +12,6 @@ const {
 const { registrarLog } = require('../services/historialService');
 const {
     redondear,
-    PLAZOS_CREDITO,
-    precioFactura,
     mismoId,
     aTexto,
     clientesDelVendedor,
@@ -25,12 +22,14 @@ const {
     masRecientePrimero,
     responderError,
 } = require('../utils/cartera');
+const { HOJAS_PRECIOS, configuracionDe, nivelPorCantidad, precioFacturaDe } = require('../utils/precios');
 const { aNumeroOpcional, aFecha, fechaHoy, sumarDias } = require('../utils/valores');
 
 const MAXIMO_PRODUCTOS = 50;
 const DIGITOS_FACTURA = 6;
-// La deuda de una venta vence al último plazo: el precio a pagar se calcula por los días que pasen hasta el pago
-const DIAS_VENCIMIENTO = Math.max(...PLAZOS_CREDITO);
+// Días de crédito de la deuda de una venta (fecha_vencimiento). El precio a pagar no depende de esto: se
+// calcula al cobrar por los días desde la entrega (hoja Plazos).
+const DIAS_VENCIMIENTO = 30;
 
 // Siguiente número de factura (000001, 000002...): el mayor número de la hoja Ventas + 1.
 // Es correlativo para todos los vendedores; los números que no son solo dígitos se ignoran.
@@ -58,10 +57,12 @@ const leerProductos = (lista) => {
     return { productos };
 };
 
-// Busca cada línea en el catálogo (por id_producto o, si no viene, por nombre) y le pone el precio de factura
-// (columna precio, el más alto): el vendedor no puede cambiarlo y los descuentos por contado o plazo se hacen al cobrar. Solo se piden
-// productos activos. Devuelve { productos } (con id_producto, nombre del catálogo, precio_unitario y subtotal) o { error }
-const preciarConCatalogo = (lineas, catalogo) => {
+// Busca cada línea en el catálogo (por id_producto o, si no viene, por nombre) y le pone el precio de factura del
+// motor de precios: el nivel sale de la cantidad de ese producto en la línea (hoja Niveles) y el precio es el más
+// alto de las dos monedas en el plazo que se factura (hoja Precios). La moneda se sabe al cobrar, y los descuentos
+// por pagar antes también se hacen al cobrar. Solo se piden productos activos.
+// Devuelve { productos } (con id_producto, nombre del catálogo, id_nivel, precio_unitario y subtotal) o { error }
+const preciarConCatalogo = (lineas, catalogo, config) => {
     const productos = [];
     for (const linea of lineas) {
         const nombre = linea.producto.toLowerCase();
@@ -72,12 +73,17 @@ const preciarConCatalogo = (lineas, catalogo) => {
         if (aTexto(producto.estado).toLowerCase() === 'inactivo') {
             return { error: `El producto "${producto.nombre}" está inactivo.` };
         }
-        const precio = redondear(precioFactura(producto));
+        const nivel = nivelPorCantidad(config.niveles, linea.cantidad);
+        const precio = precioFacturaDe(config, producto.id_producto, nivel.id_nivel);
+        if (precio === null) {
+            return { error: `"${producto.nombre}" no tiene precio para ${nivel.nombre} (${config.factura.nombre}).` };
+        }
         productos.push({
             id_producto: producto.id_producto,
             producto: aTexto(producto.nombre),
+            id_nivel: nivel.id_nivel,
             cantidad: linea.cantidad,
-            precio_unitario: precio,
+            precio_unitario: redondear(precio),
             subtotal: redondear(linea.cantidad * precio),
         });
     }
@@ -87,10 +93,12 @@ const preciarConCatalogo = (lineas, catalogo) => {
 // Columnas que escriben los pedidos y su entrega en cada hoja (se comprueban antes de escribir nada)
 const COLUMNAS = {
     [HOJAS.pedidos]: ['id_pedido', 'id_vendedor', 'id_cliente', 'fecha_pedido', 'monto_total', 'estado', 'id_venta', 'observaciones'],
-    [HOJAS.pedidosDetalle]: ['id_detalle', 'id_pedido', 'id_producto', 'producto', 'cantidad', 'precio_unitario', 'subtotal'],
+    [HOJAS.pedidosDetalle]: ['id_detalle', 'id_pedido', 'id_producto', 'producto', 'id_nivel', 'cantidad',
+        'precio_unitario', 'subtotal'],
     [HOJAS.ventas]: ['id_venta', 'id_pedido', 'id_vendedor', 'id_cliente', 'numero_factura', 'fecha_venta', 'tipo_pago',
         'monto_total', 'id_deuda', 'estado_entrega', 'fecha_entrega', 'nota_entrega', 'observaciones'],
-    [HOJAS.ventasDetalle]: ['id_detalle', 'id_venta', 'id_producto', 'producto', 'cantidad', 'precio_unitario', 'subtotal'],
+    [HOJAS.ventasDetalle]: ['id_detalle', 'id_venta', 'id_producto', 'producto', 'id_nivel', 'cantidad',
+        'precio_unitario', 'subtotal'],
     [HOJAS.deudas]: ['id_deuda', 'id_cliente', 'numero_factura', 'monto_total', 'monto_pagado', 'monto_pendiente', 'estado',
         'fecha_emision', 'fecha_vencimiento', 'observaciones'],
 };
@@ -120,7 +128,8 @@ const leerPedido = async (body) => {
     if (error) return { status: 400, mensaje: error };
     if (!fechaPedido) return { status: 400, mensaje: 'Fecha inválida. Usa el formato YYYY-MM-DD.' };
 
-    const precios = preciarConCatalogo(lineas, (await leerHoja(HOJAS.productos)).filas);
+    const hojas = await leerHojas(HOJAS.productos, ...HOJAS_PRECIOS);
+    const precios = preciarConCatalogo(lineas, hojas[HOJAS.productos].filas, configuracionDe(hojas));
     if (precios.error) return { status: 400, mensaje: precios.error };
     const montoTotal = totalDe(precios.productos);
     if (montoTotal <= 0) return { status: 400, mensaje: 'El total del pedido debe ser mayor que 0.' };
@@ -204,7 +213,8 @@ const obtenerPedido = async (req, res) => {
 
 // POST /bill/api/vendedores/pedidos  (JSON: { id_cliente, productos: [{ producto, cantidad, id_producto? }],
 //                                    fecha_pedido?, observaciones? })
-// Sin forma de pago: el pedido solo reserva lo que pidió el cliente, al precio de factura del catálogo.
+// Sin forma de pago ni moneda: el pedido solo reserva lo que pidió el cliente, al precio de factura del nivel
+// de cada línea.
 // Pasa a venta (con su número de factura y su deuda) cuando se entrega.
 const crearPedido = async (req, res) => {
     try {
@@ -253,7 +263,7 @@ const crearPedido = async (req, res) => {
 };
 
 // PUT /bill/api/vendedores/pedidos/:id  (mismo cuerpo que crear; solo pedidos pendientes)
-// Reemplaza el cliente, la fecha, los productos (con el precio actual del catálogo) y las observaciones.
+// Reemplaza el cliente, la fecha, los productos (con el nivel y el precio actuales) y las observaciones.
 const actualizarPedido = async (req, res) => {
     try {
         const leido = await leerPedido(req.body);
@@ -337,7 +347,8 @@ const anularPedido = async (req, res) => {
 // body JSON: { fecha_entrega?, nota_entrega?, productos?: [{ id_detalle, cantidad }] }
 // Convierte el pedido en venta. productos indica cuánto se entregó de cada línea del pedido (0 = no se entregó;
 // nunca más de lo pedido); sin productos se entrega todo. La venta lleva el número de factura correlativo, los
-// precios del pedido y siempre una deuda por el total en dólares, que vence al último plazo de crédito.
+// precios y niveles del pedido (aunque se entregue menos, no cambia de nivel) y siempre una deuda por el total en
+// dólares, que vence a los DIAS_VENCIMIENTO días.
 const entregarPedido = async (req, res) => {
     const fechaEntrega = req.body?.fecha_entrega ? aFecha(req.body.fecha_entrega) : fechaHoy();
     const entregados = req.body?.productos;
@@ -378,6 +389,7 @@ const entregarPedido = async (req, res) => {
                     productos.push({
                         id_producto: linea.id_producto,
                         producto: linea.producto,
+                        id_nivel: linea.id_nivel,
                         cantidad,
                         precio_unitario: linea.precio_unitario,
                         subtotal: redondear(cantidad * linea.precio_unitario),

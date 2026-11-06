@@ -8,7 +8,7 @@ const router = Router();
 // GET /bill/api/vendedores/deudas?id_cliente=&estado=
 router.get('/', verificarTokenVendedor, listarDeudas);
 
-// GET /bill/api/vendedores/deudas/:id/cobro?fecha=  (tramo sugerido y saldo a contado, 7, 15 y 30 días)
+// GET /bill/api/vendedores/deudas/:id/cobro?fecha=  (plazo sugerido y saldo en cada plazo y moneda)
 router.get('/:id/cobro', verificarTokenVendedor, obtenerCobroDeuda);
 
 // POST /bill/api/vendedores/deudas

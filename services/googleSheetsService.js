@@ -11,6 +11,9 @@ const HOJAS = {
     pedidos: 'Pedidos',
     pedidosDetalle: 'Pedidos_Detalle',
     productos: 'Productos',
+    niveles: 'Niveles', // nivel de volumen por cantidad de un producto en el pedido (L1, L2...)
+    plazos: 'Plazos', // tramos de días para pagar (Contado, Crédito 1...); uno se factura
+    precios: 'Precios', // precio de cada producto por nivel, plazo y moneda
     bancos: 'Bancos',
     tasas: 'Tasas_Dolar',
     metas: 'Metas', // meta de cobro y sueldo base de cada vendedor por mes
@@ -269,6 +272,61 @@ const exigirColumnas = (hoja, encabezados, columnas) => {
     }
 };
 
+// Crea una pestaña con sus encabezados si no existe. Devuelve true si la creó.
+const crearPestana = async (hoja, encabezados) => {
+    const sheets = obtenerCliente();
+    const { data } = await sheets.spreadsheets.get({
+        spreadsheetId: process.env.GOOGLE_SHEETS_ID,
+        fields: 'sheets.properties(title)',
+    });
+    if (data.sheets.some(({ properties }) => properties.title === hoja)) return false;
+
+    await sheets.spreadsheets.batchUpdate({
+        spreadsheetId: process.env.GOOGLE_SHEETS_ID,
+        requestBody: { requests: [{ addSheet: { properties: { title: hoja } } }] },
+    });
+    await sheets.spreadsheets.values.update({
+        spreadsheetId: process.env.GOOGLE_SHEETS_ID,
+        range: rangoHoja(hoja, 'A1'),
+        valueInputOption: 'RAW',
+        requestBody: { values: [encabezados] },
+    });
+    return true;
+};
+
+// Agrega al final del encabezado las columnas que falten. Devuelve las que agregó.
+// Si la pestaña tiene pocas columnas, Sheets la amplía al escribir en ellas.
+const agregarColumnas = async (hoja, columnas) => {
+    const { encabezados } = await leerHoja(hoja);
+    const faltan = columnas.filter((c) => !encabezados.includes(c));
+    if (!faltan.length) return [];
+
+    const sheetId = await idPestana(hoja);
+    const sheets = obtenerCliente();
+    const { data } = await sheets.spreadsheets.get({
+        spreadsheetId: process.env.GOOGLE_SHEETS_ID,
+        fields: 'sheets.properties(sheetId,gridProperties.columnCount)',
+    });
+    const disponibles = data.sheets.find(({ properties }) => properties.sheetId === sheetId)
+        ?.properties.gridProperties.columnCount ?? 0;
+    const necesarias = encabezados.length + faltan.length;
+    if (necesarias > disponibles) {
+        await sheets.spreadsheets.batchUpdate({
+            spreadsheetId: process.env.GOOGLE_SHEETS_ID,
+            requestBody: {
+                requests: [{ appendDimension: { sheetId, dimension: 'COLUMNS', length: necesarias - disponibles } }],
+            },
+        });
+    }
+    await sheets.spreadsheets.values.update({
+        spreadsheetId: process.env.GOOGLE_SHEETS_ID,
+        range: rangoHoja(hoja, `${letraColumna(encabezados.length)}1`),
+        valueInputOption: 'RAW',
+        requestBody: { values: [faltan] },
+    });
+    return faltan;
+};
+
 // Siguiente ID con prefijo y 3 dígitos mínimo: CLI-001, CLI-002...
 const siguienteId = (filas, campo, prefijo) => {
     const patron = new RegExp(`^${prefijo}-(\\d+)$`);
@@ -307,6 +365,8 @@ module.exports = {
     actualizarFilas,
     actualizarFilaDonde,
     exigirColumnas,
+    crearPestana,
+    agregarColumnas,
     siguienteId,
     siguientesIds,
     conBloqueo,

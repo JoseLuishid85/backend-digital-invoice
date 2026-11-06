@@ -11,6 +11,7 @@ const {
     ESTADOS_COMISION, SOLO_PAGOS_VERIFICADOS, aPeriodo, periodoActual, metaVigente, calcularLiquidacion,
     liquidacionGuardada, resumenLiquidacion,
 } = require('../utils/comisiones');
+const { HOJAS_PRECIOS, configuracionDe } = require('../utils/precios');
 const { aFecha, fechaHoy } = require('../utils/valores');
 
 // Columnas que escribe el cierre del mes en cada hoja (se comprueban antes de escribir nada)
@@ -19,7 +20,7 @@ const COLUMNAS = {
         'meta_cumplida', 'comision_calculada', 'comision_pagada', 'total_a_pagar', 'estado', 'fecha_cierre',
         'cerrado_por', 'fecha_pago'],
     [HOJAS.comisionesDetalle]: ['id_detalle', 'id_comision', 'id_deuda', 'id_venta', 'numero_factura', 'id_pago',
-        'id_producto', 'producto', 'plazo_dias', 'base', 'porcentaje', 'monto_comision'],
+        'id_producto', 'producto', 'id_plazo', 'base', 'porcentaje', 'monto_comision'],
     [HOJAS.deudas]: ['fecha_cancelacion', 'id_comision'],
 };
 const COLUMNAS_META = ['id_meta', 'id_vendedor', 'periodo', 'meta_monto', 'sueldo_base', 'observaciones'];
@@ -27,7 +28,7 @@ const COLUMNAS_META = ['id_meta', 'id_vendedor', 'periodo', 'meta_monto', 'sueld
 // Hojas que hacen falta para calcular o mostrar una liquidación
 const HOJAS_CALCULO = [
     HOJAS.usuarios, HOJAS.clientes, HOJAS.deudas, HOJAS.pagos, HOJAS.ventas, HOJAS.ventasDetalle, HOJAS.productos,
-    HOJAS.metas, HOJAS.comisiones, HOJAS.comisionesDetalle,
+    HOJAS.metas, HOJAS.comisiones, HOJAS.comisionesDetalle, ...HOJAS_PRECIOS,
 ];
 
 const filasCalculo = (hojas) => ({
@@ -38,6 +39,7 @@ const filasCalculo = (hojas) => ({
     detalles: hojas[HOJAS.ventasDetalle].filas,
     catalogo: hojas[HOJAS.productos].filas,
     metas: hojas[HOJAS.metas].filas,
+    config: configuracionDe(hojas),
 });
 
 // Periodo de la consulta (?periodo=YYYY-MM, por defecto el mes en curso) o null si no es válido

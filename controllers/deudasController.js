@@ -7,11 +7,9 @@ const {
     clientesDelVendedor,
     formatearDeuda,
     conCobros,
-    totalesPorTramo,
-    detalleFactura,
-    opcionesCobro,
     responderError,
 } = require('../utils/cartera');
+const { HOJAS_PRECIOS, configuracionDe, totalesCobro, detalleFactura, opcionesCobro } = require('../utils/precios');
 const { aNumeroOpcional, aFecha, fechaHoy } = require('../utils/valores');
 
 // GET /bill/api/vendedores/deudas?id_cliente=&estado=
@@ -38,24 +36,29 @@ const listarDeudas = async (req, res) => {
 };
 
 // GET /bill/api/vendedores/deudas/:id/cobro?fecha=YYYY-MM-DD  (fecha del pago; por defecto hoy)
-// Lo que se cobraría ese día: días desde la entrega, el tramo sugerido (contado, 7, 15 o 30 días), el saldo a
-// cada tramo y el detalle de la factura (productos con su precio en cada tramo). Las deudas manuales (sin venta
-// ni productos) no tienen tramos ni detalle (tramos: null, detalle: null).
+// Lo que se cobraría ese día: días desde la entrega, el plazo sugerido (hoja Plazos), en cada plazo y moneda el
+// saldo, el descuento y el factor, y el detalle de la factura (productos con su nivel y su precio en cada plazo y
+// moneda). Las deudas manuales (sin venta ni productos) no tienen plazos ni detalle (plazos: null, detalle: null).
 const obtenerCobroDeuda = async (req, res) => {
     const fechaPago = req.query.fecha ? aFecha(req.query.fecha) : fechaHoy();
     if (!fechaPago) return res.status(400).json({ ok: false, mensaje: 'Fecha inválida. Usa el formato YYYY-MM-DD.' });
 
     try {
-        const hojas = await leerHojas(HOJAS.clientes, HOJAS.deudas, HOJAS.ventas, HOJAS.ventasDetalle, HOJAS.productos);
+        const hojas = await leerHojas(
+            HOJAS.clientes, HOJAS.deudas, HOJAS.ventas, HOJAS.ventasDetalle, HOJAS.productos, ...HOJAS_PRECIOS);
         const clientes = clientesDelVendedor(hojas[HOJAS.clientes].filas, req.vendedor.id_vendedor);
         const deuda = hojas[HOJAS.deudas].filas.find((d) =>
             mismoId(d.id_deuda, req.params.id) && clientes.some((c) => mismoId(c.id_cliente, d.id_cliente)));
         if (!deuda) return res.status(404).json({ ok: false, mensaje: 'Deuda no encontrada.' });
 
-        const totales = totalesPorTramo(
-            deuda, hojas[HOJAS.ventas].filas, hojas[HOJAS.ventasDetalle].filas, hojas[HOJAS.productos].filas);
+        const config = configuracionDe(hojas);
+        const totales = totalesCobro(
+            deuda, hojas[HOJAS.ventas].filas, hojas[HOJAS.ventasDetalle].filas, hojas[HOJAS.productos].filas, config);
         const detalle = detalleFactura(deuda, hojas[HOJAS.ventas].filas, hojas[HOJAS.ventasDetalle].filas, totales);
-        return res.json({ ok: true, cobro: { fecha_pago: fechaPago, ...opcionesCobro(deuda, totales, fechaPago), detalle } });
+        return res.json({
+            ok: true,
+            cobro: { fecha_pago: fechaPago, ...opcionesCobro(deuda, totales, fechaPago, config), detalle },
+        });
     } catch (error) {
         return responderError(res, error, 'Error al calcular el cobro');
     }

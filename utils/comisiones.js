@@ -1,4 +1,4 @@
-const { diasEntre, fechaHoy } = require('./valores');
+const { fechaHoy } = require('./valores');
 const {
     aMonto,
     aMontoOpcional,
@@ -6,27 +6,25 @@ const {
     sumar,
     mismoId,
     aTexto,
-    TRAMOS_COBRO,
-    tramoPorDias,
     clientesDelVendedor,
     productoDeLinea,
-    totalesPorTramo,
 } = require('./cartera');
+const { aMoneda, totalesCobro, plazoDelPago } = require('./precios');
 
 // Reglas de comisión (pendientes de confirmar con finanzas; cambiarlas aquí):
 // - El vendedor cobra su sueldo_base siempre; la comisión solo si lo cobrado en el mes llega a la meta.
 //   Si no la cumple, las comisiones de ese mes se pierden (las facturas quedan liquidadas con comisión 0).
 // - Solo comisionan las facturas pagadas por completo, en el mes en que se cancelan (o en el primer mes que se
 //   cierre después, si sus pagos se verificaron tarde).
-// - La comisión es un % de lo cobrado de cada producto, según el tramo del pago (contado, 7, 15 o 30 días).
+// - La comisión es un % de lo cobrado de cada producto (columna comision de Productos). Lo cobrado en cada pago
+//   se reparte entre los productos según su precio en el plazo y la moneda de ese pago.
 // - SOLO_PAGOS_VERIFICADOS: un pago cuenta para la meta y para la comisión solo cuando el administrador lo
 //   verificó. Con false cuentan también los pendientes (nunca los rechazados).
 // - Las deudas manuales (sin venta ni productos) no comisionan.
 const SOLO_PAGOS_VERIFICADOS = true;
 
-// Columnas del % de comisión en la hoja Productos: comision_contado, comision_7, comision_15, comision_30
-const columnaComision = (tramo) => (tramo ? `comision_${tramo}` : 'comision_contado');
-const COLUMNAS_COMISION = TRAMOS_COBRO.map(columnaComision);
+// Columna del % de comisión en la hoja Productos (vacío = sin comisión)
+const COLUMNA_COMISION = 'comision';
 
 // Estados de una liquidación en la hoja Comisiones (un mes sin fila está abierto: se calcula al consultarlo)
 const ESTADOS_COMISION = { abierta: 'abierta', cerrada: 'cerrada', pagada: 'pagada' };
@@ -57,15 +55,6 @@ const metaVigente = (metas, idVendedor, periodo) => metas
     .filter((m) => mismoId(m.id_vendedor, idVendedor) && aPeriodo(m.periodo) && aPeriodo(m.periodo) <= periodo)
     .sort((a, b) => aPeriodo(b.periodo).localeCompare(aPeriodo(a.periodo)))[0] ?? null;
 
-// Tramo de un pago: su plazo_dias o, en pagos anteriores a los tramos, el que corresponde por los días desde la entrega
-const tramoDelPago = (pago, deuda) => {
-    const tramo = aMontoOpcional(pago.plazo_dias);
-    if (TRAMOS_COBRO.includes(tramo)) return tramo;
-    const emision = aTexto(deuda.fecha_emision);
-    const fecha = aTexto(pago.fecha_pago);
-    return emision && fecha ? tramoPorDias(Math.max(diasEntre(emision, fecha), 0)) : 0;
-};
-
 // Reparte un monto en proporción a los pesos, redondeado a centavos (la última parte absorbe el redondeo)
 const repartir = (monto, pesos) => {
     const total = pesos.reduce((suma, peso) => suma + peso, 0);
@@ -79,20 +68,21 @@ const repartir = (monto, pesos) => {
 };
 
 // Comisión de una factura pagada: por cada pago y cada producto, la parte de lo cobrado que le toca al producto
-// (según su precio en el tramo del pago) por el % de comisión de ese tramo en el catálogo.
-const lineasComision = (deuda, pagosDeuda, totales, catalogo) => pagosDeuda.flatMap((pago) => {
-    const tramo = tramoDelPago(pago, deuda);
-    const pesos = totales.lineas.map((linea) => linea.cantidad * linea.precios[tramo] || linea.subtotal);
+// (según su precio en el plazo y la moneda del pago) por el % de comisión del producto en el catálogo.
+const lineasComision = (deuda, pagosDeuda, totales, catalogo, config) => pagosDeuda.flatMap((pago) => {
+    const idPlazo = plazoDelPago(pago, deuda, config);
+    const moneda = aMoneda(pago.moneda) ?? 'USD';
+    const pesos = totales.lineas.map((linea) => linea.cantidad * linea.precios[idPlazo][moneda] || linea.subtotal);
     const bases = repartir(aMonto(pago.monto), pesos);
 
     return totales.lineas.map((linea, i) => {
         const producto = productoDeLinea(catalogo, linea);
-        const porcentaje = (producto && aMontoOpcional(producto[columnaComision(tramo)])) || 0;
+        const porcentaje = (producto && aMontoOpcional(producto[COLUMNA_COMISION])) || 0;
         return {
             id_pago: aTexto(pago.id_pago),
             id_producto: aTexto(linea.id_producto),
             producto: aTexto(linea.producto),
-            plazo_dias: tramo,
+            id_plazo: idPlazo,
             base: bases[i],
             porcentaje,
             monto_comision: redondear((bases[i] * porcentaje) / 100),
@@ -101,7 +91,7 @@ const lineasComision = (deuda, pagosDeuda, totales, catalogo) => pagosDeuda.flat
 });
 
 // Liquidación de un vendedor en un periodo abierto (calculada con los datos actuales, sin guardar nada).
-// hojas: { clientes, deudas, pagos, ventas, detalles, catalogo, metas } (filas de cada hoja).
+// hojas: { clientes, deudas, pagos, ventas, detalles, catalogo, metas } (filas de cada hoja) y config (motor de precios).
 // facturas: las que comisionan; por_verificar: pagadas con algún pago sin verificar (o rechazado), que entran
 // cuando se verifiquen; sin_productos: deudas manuales pagadas (no comisionan).
 const calcularLiquidacion = (idVendedor, periodo, hojas) => {
@@ -134,12 +124,12 @@ const calcularLiquidacion = (idVendedor, periodo, hojas) => {
             porVerificar.push(factura);
             continue;
         }
-        const totales = totalesPorTramo(deuda, hojas.ventas, hojas.detalles, hojas.catalogo);
+        const totales = totalesCobro(deuda, hojas.ventas, hojas.detalles, hojas.catalogo, hojas.config);
         if (!totales) {
             sinProductos.push(factura);
             continue;
         }
-        const lineas = lineasComision(deuda, pagosDeuda, totales, hojas.catalogo);
+        const lineas = lineasComision(deuda, pagosDeuda, totales, hojas.catalogo, hojas.config);
         facturas.push({ ...factura, comision: sumar(lineas, 'monto_comision'), lineas });
     }
 
@@ -197,7 +187,8 @@ const liquidacionGuardada = ({ _fila, ...fila }, detalles, deudas, clientes) => 
             id_pago: aTexto(linea.id_pago),
             id_producto: aTexto(linea.id_producto),
             producto: aTexto(linea.producto),
-            plazo_dias: aMonto(linea.plazo_dias),
+            // Las liquidaciones anteriores al motor de precios guardaban plazo_dias (0, 7, 15 o 30)
+            id_plazo: aTexto(linea.id_plazo) || (aTexto(linea.plazo_dias) !== '' ? `${aMonto(linea.plazo_dias)} días` : ''),
             base: aMonto(linea.base),
             porcentaje: aMonto(linea.porcentaje),
             monto_comision: aMonto(linea.monto_comision),
@@ -235,8 +226,7 @@ const resumenLiquidacion = ({ facturas, por_verificar, sin_productos, ...resto }
 
 module.exports = {
     SOLO_PAGOS_VERIFICADOS,
-    columnaComision,
-    COLUMNAS_COMISION,
+    COLUMNA_COMISION,
     ESTADOS_COMISION,
     aPeriodo,
     periodoActual,

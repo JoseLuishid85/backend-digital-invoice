@@ -109,7 +109,8 @@ const formatearPago = ({ _fila, comprobante_url: comprobanteUrl, ...pago }, clie
     monto: aMonto(pago.monto),
     monto_bs: aMontoOpcional(pago.monto_bs),
     tasa_bcv: aMontoOpcional(pago.tasa_bcv),
-    plazo_dias: aMontoOpcional(pago.plazo_dias),
+    id_plazo: aTexto(pago.id_plazo) || null, // plazo de la hoja Plazos con que se cobró
+    plazo_dias: aMontoOpcional(pago.plazo_dias), // pagos anteriores al motor de precios (0, 7, 15 o 30)
     monto_factura: aMontoOpcional(pago.monto_factura),
     descuento: aMontoOpcional(pago.descuento),
     estado_verificacion: aTexto(pago.estado_verificacion).toLowerCase() || 'pendiente',
