@@ -18,7 +18,7 @@ const {
     responderError,
 } = require('../utils/cartera');
 const {
-    HOJAS_PRECIOS, configuracionDe, totalesCobro, factorCobro, opcionesCobro,
+    HOJAS_PRECIOS, configuracionDe, totalesCobro, descuentoAlCancelar, opcionesCobro, plazoDisponible,
 } = require('../utils/precios');
 const { aFecha, fechaHoy } = require('../utils/valores');
 
@@ -58,11 +58,12 @@ const COLUMNAS_ABONO = ['banco', 'id_plazo', 'monto_factura', 'descuento'];
 //            y comprobante_<n> (foto o PDF opcional de la forma de pago n). También acepta el JSON como body.
 // Un abono puede combinar varias formas de pago; cada una es una fila de Pagos. Los montos en bolívares
 // se convierten con tasa_bcv (o la del día del pago). banco (id_banco) es obligatorio en pago móvil y transferencia.
-// Las deudas de pedidos entregados se cobran por plazos (hoja Plazos): id_plazo (por defecto el que corresponde a
-// los días desde la entrega; el vendedor puede elegir otro) y la moneda de cada forma de pago fijan el precio
-// (hoja Precios). La deuda guarda sus montos a precio de factura: cada forma de pago salda monto / factor de la
-// factura (factor = total en ese plazo y moneda / total facturado), así un abono en $ y otro en Bs pagan cada uno
-// su parte al precio de su moneda. Cada fila guarda monto_factura (lo que salda) y descuento (monto_factura - monto).
+// Las deudas de pedidos entregados tienen descuento por pagar antes (hojas Plazos y Precios), pero solo en el pago
+// que cancela la factura: id_plazo (por defecto el que corresponde a los días desde la entrega; se puede elegir uno
+// posterior, nunca uno anterior cuyo descuento ya venció) y la moneda fijan el total de la factura en ese plazo, y
+// para cancelarla se paga ese total menos lo ya abonado. Un abono menor no lleva descuento: salda su monto a
+// precio de factura y su fila guarda el plazo que se factura. Cada fila guarda monto_factura (lo que salda de la
+// deuda) y descuento (monto_factura - monto).
 // Actualiza monto_pagado, monto_pendiente y estado de la deuda.
 const registrarPago = async (req, res) => {
     const datos = leerDatos(req);
@@ -114,38 +115,43 @@ const registrarPago = async (req, res) => {
 
             if (pendienteAntes <= 0) return { status: 409, mensaje: 'La deuda ya está pagada.' };
 
-            // Plazo del cobro (sin plazos, deuda manual, el factor es 1 y se cobra el saldo tal cual)
+            // Plazo del cobro (sin plazos, deuda manual, no hay descuento y se cobra el saldo tal cual)
             const config = configuracionDe(hojas);
             const totales = totalesCobro(
                 deuda, hojas[HOJAS.ventas].filas, hojas[HOJAS.ventasDetalle].filas, hojas[HOJAS.productos].filas, config);
             let idPlazo = null;
             if (totales) {
-                const elegido = plazoEnviado
-                    ? config.plazos.find((p) => mismoId(p.id_plazo, plazoEnviado))
-                    : config.plazos.find((p) => p.id_plazo === opcionesCobro(deuda, totales, fechaPago, config).plazo_sugerido);
+                const { dias, plazo_sugerido: idSugerido } = opcionesCobro(deuda, totales, fechaPago, config);
+                const sugerido = config.plazos.find((p) => p.id_plazo === idSugerido);
+                const elegido = plazoEnviado ? config.plazos.find((p) => mismoId(p.id_plazo, plazoEnviado)) : sugerido;
                 if (!elegido) {
                     return { status: 400, mensaje: `El plazo debe ser ${config.plazos.map((p) => p.id_plazo).join(', ')}.` };
                 }
+                if (!plazoDisponible(elegido, sugerido)) {
+                    return {
+                        status: 400,
+                        mensaje: `Entregado hace ${dias} días: ya no aplica ${elegido.nombre}, corresponde ${sugerido.nombre}.`,
+                    };
+                }
                 idPlazo = elegido.id_plazo;
             }
-            const factorDe = (linea) => (totales ? factorCobro(totales, idPlazo, linea.metodo.moneda) : 1);
 
-            // Lo que salda de la factura cada forma de pago (dólares / factor de su moneda)
-            const facturaEnviada = lineas.reduce((suma, l) => suma + l.usd / factorDe(l), 0);
-            if (facturaEnviada > pendienteAntes + TOLERANCIA_USD) {
-                const saldos = [...new Set(lineas.map((l) => l.metodo.moneda))]
-                    .map((m) => `${redondear(pendienteAntes * factorCobro(totales, idPlazo, m))} ${m === 'USD' ? 'pagando en $' : 'pagando en Bs'}`);
-                return { status: 400, mensaje: `Los pagos superan el saldo pendiente (${saldos.join(' o ')}).` };
+            // Lo que hay que pagar para cancelar la factura (con su descuento); menos que eso es un abono sin descuento
+            const monedas = [...new Set(lineas.map((l) => l.metodo.moneda))];
+            const descuento = descuentoAlCancelar(totales, idPlazo, monedas, pendienteAntes);
+            const paraCancelar = redondear(pendienteAntes - descuento);
+            const enviado = redondear(totalUsd);
+            if (enviado > paraCancelar + TOLERANCIA_USD) {
+                return { status: 400, mensaje: `Los pagos superan lo que falta para cancelar la factura ($ ${paraCancelar}).` };
             }
-            // Con una sola moneda, un excedente de un céntimo por el redondeo de los bolívares se descuenta del abono
-            const monedas = new Set(lineas.map((l) => l.metodo.moneda));
-            const saldoUnaMoneda = monedas.size === 1 ? redondear(pendienteAntes * factorDe(lineas[0])) : Infinity;
-            const abono = Math.min(redondear(totalUsd), saldoUnaMoneda);
+            const cancela = enviado >= paraCancelar - TOLERANCIA_USD;
+            // Si cancela, un céntimo de diferencia por el redondeo de los bolívares se ajusta al monto exacto
+            const abono = cancela ? paraCancelar : enviado;
             if (abono <= 0) return { status: 400, mensaje: 'El monto en dólares debe ser mayor que 0.' };
-            // Lo que el abono salda de la deuda a precio de factura; si cubre el saldo, la salda exacta
-            const abonoFactura = facturaEnviada >= pendienteAntes - TOLERANCIA_USD
-                ? pendienteAntes
-                : Math.min(redondear(facturaEnviada), pendienteAntes);
+            // Lo que el abono salda de la deuda a precio de factura: al cancelar, todo el saldo
+            const abonoFactura = cancela ? pendienteAntes : abono;
+            // Plazo con que se cobró: el elegido si cancela; si no, el que se factura (sin descuento)
+            const plazoFila = totales ? (cancela ? idPlazo : config.factura.id_plazo) : '';
 
             const montoPagado = redondear(pagadoAntes + abonoFactura);
             const montoPendiente = redondear(montoTotal - montoPagado);
@@ -166,9 +172,10 @@ const registrarPago = async (req, res) => {
 
             let pagos;
             try {
-                // Cada fila guarda el plazo, su parte de la factura y el descuento (la última absorbe el redondeo)
+                // Cada fila guarda el plazo, su parte de la factura y el descuento repartido en proporción a su monto
+                // (la última absorbe el redondeo)
                 const repartidas = repartirUsd(lineas, abono);
-                const facturaPorLinea = repartirUsd(repartidas.map((l) => ({ usd: l.monto / factorDe(l) })), abonoFactura);
+                const facturaPorLinea = repartirUsd(repartidas.map((l) => ({ usd: l.monto * (abonoFactura / abono) })), abonoFactura);
                 pagos = await agregarFilas(HOJAS.pagos, filasPago(repartidas, {
                     ids: siguientesIds(hojas[HOJAS.pagos].filas, 'id_pago', 'PAG', lineas.length),
                     comprobantes,
@@ -178,7 +185,7 @@ const registrarPago = async (req, res) => {
                     id_cliente: deuda.id_cliente,
                     fecha_pago: fechaPago,
                     registrado_por: req.vendedor.id_vendedor,
-                    id_plazo: idPlazo ?? '',
+                    id_plazo: plazoFila,
                 }).map((fila, i) => ({
                     ...fila,
                     monto_factura: facturaPorLinea[i].monto,

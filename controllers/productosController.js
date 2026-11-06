@@ -7,7 +7,7 @@ const { aMonto, aMontoOpcional, redondear, mismoId, aTexto, responderError } = r
 const { COLUMNA_COMISION } = require('../utils/comisiones');
 const {
     MONEDAS, COLUMNAS_PRECIOS, HOJAS_PRECIOS, aMoneda, clavePrecio, configuracionDe, configuracionPublica,
-    preciosFacturaPorNivel, preciosDelProducto,
+    preciosFacturaPorNivel, preciosCobroPorNivel, preciosDelProducto,
 } = require('../utils/precios');
 
 // En la hoja el estado se escribe con mayúscula inicial (Activo / Inactivo)
@@ -16,12 +16,16 @@ const MAXIMO_COMISION = 100;
 const CAMPOS_PRECIO = ['ajuste_pct', 'ajuste_monto', 'precio_final', 'ganancia_pct'];
 
 // Producto listo para responder: stock y comisión como número, sin el número de fila.
-// Con la configuración del motor agrega precios_factura (precio de factura por nivel: { L1: ..., L2: ... }).
+// Con la configuración del motor agrega precios_factura (precio de factura por nivel: { L1: ..., L2: ... }) y
+// precios_cobro (por nivel, plazo y moneda: { L1: { CONT: { USD, VES } } }).
 const formatearProducto = ({ _fila, ...producto }, config = null) => ({
     ...producto,
     [COLUMNA_COMISION]: aMontoOpcional(producto[COLUMNA_COMISION]),
     stock: aMonto(producto.stock),
-    ...(config ? { precios_factura: preciosFacturaPorNivel(config, producto.id_producto) } : {}),
+    ...(config ? {
+        precios_factura: preciosFacturaPorNivel(config, producto.id_producto),
+        precios_cobro: preciosCobroPorNivel(config, producto.id_producto),
+    } : {}),
 });
 
 // Número con coma o punto decimal. Vacío = `vacio`; null si no es válido (o es negativo sin `negativos`)

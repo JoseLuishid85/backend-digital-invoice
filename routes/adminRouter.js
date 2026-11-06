@@ -18,6 +18,7 @@ const {
 } = require('../controllers/comisionesController');
 const { consultarVentasAdmin } = require('../controllers/consultasController');
 const { listarClientesAdmin, obtenerHistorialAdmin } = require('../controllers/clientesController');
+const { listarPedidosAdmin, entregarPedido } = require('../controllers/pedidosController');
 
 // Consultas del administrador sobre todos los vendedores (nivel_acceso Administrador en la hoja Usuarios)
 const router = Router();
@@ -34,6 +35,13 @@ router.get('/clientes', soloAdministrador, listarClientesAdmin);
 
 // GET /bill/api/vendedores/admin/clientes/:id/historial
 router.get('/clientes/:id/historial', soloAdministrador, obtenerHistorialAdmin);
+
+// GET /bill/api/vendedores/admin/pedidos?estado=pendiente|entregado|anulado&id_vendedor=
+router.get('/pedidos', soloAdministrador, listarPedidosAdmin);
+
+// POST /bill/api/vendedores/admin/pedidos/:id/entrega  (emite la factura: crea la venta, su número y su deuda)
+// JSON: { fecha_entrega?, nota_entrega?, productos?: [{ id_detalle, cantidad }] (sin productos = todo lo pedido) }
+router.post('/pedidos/:id/entrega', soloAdministrador, entregarPedido);
 
 // GET /bill/api/vendedores/admin/deudas?id_vendedor=&estado=
 router.get('/deudas', soloAdministrador, listarDeudasAdmin);

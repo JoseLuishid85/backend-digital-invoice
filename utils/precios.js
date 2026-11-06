@@ -127,6 +127,12 @@ const precioFacturaDe = (config, idProducto, idNivel) => {
 const preciosFacturaPorNivel = (config, idProducto) => Object.fromEntries(
     config.niveles.map((n) => [n.id_nivel, precioFacturaDe(config, idProducto, n.id_nivel)]));
 
+// Precio de cobro por nivel, plazo y moneda de un producto: { L1: { CONT: { USD, VES }, ... }, ... } (null donde
+// falta). Sirve para mostrar al tomar el pedido cuánto pagaría el cliente según el plazo y la moneda.
+const preciosCobroPorNivel = (config, idProducto) => Object.fromEntries(config.niveles.map((n) => [n.id_nivel,
+    Object.fromEntries(config.plazos.map((p) => [p.id_plazo,
+        Object.fromEntries(MONEDAS.map((m) => [m, precioDe(config, idProducto, n.id_nivel, p.id_plazo, m)]))]))]));
+
 // Filas de Precios de un producto ordenadas por moneda, plazo y nivel
 const preciosDelProducto = (config, idProducto) => {
     const ordenPlazo = (id) => config.plazos.findIndex((p) => mismoId(p.id_plazo, id));
@@ -188,14 +194,18 @@ const totalesCobro = (deuda, ventas, detalles, catalogo, config) => {
     };
 };
 
-// Cuánto se cobra de verdad en un plazo y moneda frente a lo facturado (1 sin plazos; menor que 1 = descuento).
-// La deuda guarda sus montos a precio de factura: el saldo en un plazo es monto_pendiente × factor y cada
-// forma de pago salda monto / factor de la factura. Así cada abono paga su parte al precio de su día y moneda.
-const factorCobro = (totales, idPlazo, moneda) => {
-    const total = totales?.plazos[idPlazo]?.[moneda];
-    const factor = totales && totales.factura > 0 && total !== undefined ? total / totales.factura : 1;
-    return factor > 0 ? factor : 1; // un catálogo sin precios no puede dejar la deuda en 0
+// Descuento por pagar antes: solo se gana al cancelar la factura. Es la diferencia entre el total facturado y el
+// total de la factura en ese plazo y moneda, sobre toda la factura (no solo el saldo), sin pasar del saldo.
+// Los abonos que no la cancelan van a precio de factura. Con varias monedas en un pago vale la de menor descuento.
+const descuentoAlCancelar = (totales, idPlazo, monedas, pendiente) => {
+    if (!totales || !idPlazo) return 0;
+    const total = Math.max(...monedas.map((m) => totales.plazos[idPlazo]?.[m] ?? totales.factura));
+    return Math.min(Math.max(redondear(totales.factura - total), 0), pendiente);
 };
+
+// Si un plazo se puede usar al cobrar con el plazo que corresponde por días: no uno anterior (más barato), porque
+// pasado su último día se pierde su descuento
+const plazoDisponible = (plazo, sugerido) => !sugerido || plazo.dias_desde >= sugerido.dias_desde;
 
 // Días desde la emisión (la entrega) hasta el pago
 const diasDesdeEmision = (deuda, fechaPago) => {
@@ -204,24 +214,25 @@ const diasDesdeEmision = (deuda, fechaPago) => {
 };
 
 // Opciones de cobro de una deuda en una fecha de pago: días desde la entrega, el plazo que corresponde y, si la
-// deuda tiene plazos, en cada uno y cada moneda el total, el saldo, el descuento sobre el saldo facturado y el
-// factor. plazos es null sin plazos (deuda manual).
+// deuda tiene plazos, en cada uno y cada moneda el total de la factura, el descuento si la cancela y pendiente =
+// lo que hay que pagar para cancelarla (saldo - descuento). plazos es null sin plazos (deuda manual).
+// Un abono menor no lleva descuento: baja el saldo a precio de factura.
 const opcionesCobro = (deuda, totales, fechaPago, config) => {
     const dias = diasDesdeEmision(deuda, fechaPago);
     const pendiente = aMonto(deuda.monto_pendiente);
+    const sugerido = totales ? plazoPorDias(config.plazos, dias) : null;
     return {
         dias,
-        plazo_sugerido: totales ? plazoPorDias(config.plazos, dias).id_plazo : null,
+        plazo_sugerido: sugerido?.id_plazo ?? null,
         plazos: totales && config.plazos.map((plazo) => ({
             ...plazo,
+            disponible: plazoDisponible(plazo, sugerido),
             monedas: Object.fromEntries(MONEDAS.map((moneda) => {
-                const factor = factorCobro(totales, plazo.id_plazo, moneda);
-                const aCobrar = redondear(pendiente * factor);
+                const descuento = descuentoAlCancelar(totales, plazo.id_plazo, [moneda], pendiente);
                 return [moneda, {
                     total: totales.plazos[plazo.id_plazo][moneda],
-                    pendiente: aCobrar,
-                    descuento: redondear(pendiente - aCobrar),
-                    factor,
+                    pendiente: redondear(pendiente - descuento),
+                    descuento,
                 }];
             })),
         })),
@@ -270,11 +281,13 @@ module.exports = {
     configuracionPublica,
     precioDe,
     precioFacturaDe,
+    preciosCobroPorNivel,
     preciosFacturaPorNivel,
     preciosDelProducto,
     totalesCobro,
-    factorCobro,
+    descuentoAlCancelar,
     opcionesCobro,
+    plazoDisponible,
     detalleFactura,
     plazoDelPago,
 };

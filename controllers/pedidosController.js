@@ -15,6 +15,8 @@ const {
     mismoId,
     aTexto,
     clientesDelVendedor,
+    listaVendedores,
+    nombreVendedor,
     formatearDeuda,
     formatearVenta,
     ESTADOS_PEDIDO,
@@ -153,9 +155,10 @@ const clienteActivo = (clientes, idCliente) => {
     return { cliente };
 };
 
-// Pedido pendiente del vendedor logueado, o { status, mensaje }
+// Pedido pendiente del vendedor logueado (idVendedor null = de cualquier vendedor, para el administrador),
+// o { status, mensaje }
 const pedidoPendiente = (pedidos, idPedido, idVendedor, accion) => {
-    const pedido = pedidos.find((p) => mismoId(p.id_pedido, idPedido) && mismoId(p.id_vendedor, idVendedor));
+    const pedido = pedidos.find((p) => mismoId(p.id_pedido, idPedido) && (idVendedor === null || mismoId(p.id_vendedor, idVendedor)));
     if (!pedido) return { status: 404, mensaje: 'Pedido no encontrado.' };
     const estado = aTexto(pedido.estado).toLowerCase() || 'pendiente';
     if (estado !== 'pendiente') return { status: 409, mensaje: `El pedido está ${estado}: no se puede ${accion}.` };
@@ -191,6 +194,35 @@ const listarPedidos = async (req, res) => {
 
         const total = redondear(pedidos.reduce((suma, p) => suma + p.monto_total, 0));
         return res.json({ ok: true, total, pedidos });
+    } catch (error) {
+        return responderError(res, error, 'Error al obtener los pedidos');
+    }
+};
+
+// GET /bill/api/vendedores/admin/pedidos?estado=&id_vendedor=
+// Pedidos de todos los vendedores (o de uno), con vendedor_nombre y la lista de vendedores para el filtro.
+const listarPedidosAdmin = async (req, res) => {
+    const estado = aTexto(req.query.estado).toLowerCase();
+    const idVendedor = aTexto(req.query.id_vendedor);
+
+    if (estado && !ESTADOS_PEDIDO.includes(estado)) {
+        return res.status(400).json({ ok: false, mensaje: `El estado debe ser ${ESTADOS_PEDIDO.join(', ')}.` });
+    }
+
+    try {
+        const hojas = await leerHojas(HOJAS.usuarios, HOJAS.clientes, HOJAS.pedidos, HOJAS.pedidosDetalle);
+        const vendedores = listaVendedores(hojas[HOJAS.usuarios].filas);
+        const clientes = hojas[HOJAS.clientes].filas;
+        const detalles = hojas[HOJAS.pedidosDetalle].filas;
+
+        const pedidos = hojas[HOJAS.pedidos].filas
+            .filter((p) => !idVendedor || mismoId(p.id_vendedor, idVendedor))
+            .sort(masRecientePrimero('fecha_pedido', 'id_pedido'))
+            .map((p) => ({ ...formatearPedido(p, clientes, detalles), vendedor_nombre: nombreVendedor(vendedores, p.id_vendedor) }))
+            .filter((p) => !estado || p.estado === estado);
+
+        const total = redondear(pedidos.reduce((suma, p) => suma + p.monto_total, 0));
+        return res.json({ ok: true, total, pedidos, vendedores });
     } catch (error) {
         return responderError(res, error, 'Error al obtener los pedidos');
     }
@@ -343,7 +375,7 @@ const anularPedido = async (req, res) => {
     }
 };
 
-// POST /bill/api/vendedores/pedidos/:id/entrega
+// POST /bill/api/vendedores/admin/pedidos/:id/entrega  (solo el administrador emite la factura)
 // body JSON: { fecha_entrega?, nota_entrega?, productos?: [{ id_detalle, cantidad }] }
 // Convierte el pedido en venta. productos indica cuánto se entregó de cada línea del pedido (0 = no se entregó;
 // nunca más de lo pedido); sin productos se entrega todo. La venta lleva el número de factura correlativo, los
@@ -365,13 +397,14 @@ const entregarPedido = async (req, res) => {
                 HOJAS.clientes, HOJAS.pedidos, HOJAS.pedidosDetalle, HOJAS.ventas, HOJAS.ventasDetalle, HOJAS.deudas,
             );
             exigirHojas(hojas, [HOJAS.pedidos, HOJAS.ventas, HOJAS.ventasDetalle, HOJAS.deudas]);
-            const { pedido, ...problema } = pedidoPendiente(
-                hojas[HOJAS.pedidos].filas, req.params.id, req.vendedor.id_vendedor, 'entregar');
+            const { pedido, ...problema } = pedidoPendiente(hojas[HOJAS.pedidos].filas, req.params.id, null, 'facturar');
             if (!pedido) return problema;
+            // La venta y el cliente son del vendedor que tomó el pedido
+            const idVendedor = aTexto(pedido.id_vendedor);
             if (fechaEntrega < aTexto(pedido.fecha_pedido)) {
                 return { status: 400, mensaje: 'La fecha de entrega no puede ser anterior a la del pedido.' };
             }
-            const clientes = clientesDelVendedor(hojas[HOJAS.clientes].filas, req.vendedor.id_vendedor);
+            const clientes = clientesDelVendedor(hojas[HOJAS.clientes].filas, idVendedor);
             const cliente = clientes.find((c) => mismoId(c.id_cliente, pedido.id_cliente));
             if (!cliente) return { status: 404, mensaje: 'El cliente del pedido no existe.' };
 
@@ -430,7 +463,7 @@ const entregarPedido = async (req, res) => {
                 const [venta] = await agregarFilas(HOJAS.ventas, [{
                     id_venta: idVenta,
                     id_pedido: pedido.id_pedido,
-                    id_vendedor: req.vendedor.id_vendedor,
+                    id_vendedor: idVendedor,
                     id_cliente: cliente.id_cliente,
                     numero_factura: numeroFactura,
                     fecha_venta: fechaEntrega,
@@ -466,15 +499,16 @@ const entregarPedido = async (req, res) => {
         const { pedido, venta, deuda } = resultado;
         registrarLog(req.vendedor.id_vendedor, 'entregar_pedido', {
             id_pedido: pedido.id_pedido,
+            id_vendedor: pedido.id_vendedor,
             id_venta: venta.id_venta,
             id_deuda: deuda.id_deuda,
             monto_total: venta.monto_total,
             fecha_entrega: fechaEntrega,
         });
-        return res.status(201).json({ ok: true, mensaje: 'Pedido entregado.', pedido, venta, deuda });
+        return res.status(201).json({ ok: true, mensaje: `Factura ${venta.numero_factura} emitida.`, pedido, venta, deuda });
     } catch (error) {
         return responderError(res, error, 'Error al registrar la entrega del pedido');
     }
 };
 
-module.exports = { listarPedidos, obtenerPedido, crearPedido, actualizarPedido, anularPedido, entregarPedido };
+module.exports = { listarPedidos, listarPedidosAdmin, obtenerPedido, crearPedido, actualizarPedido, anularPedido, entregarPedido };

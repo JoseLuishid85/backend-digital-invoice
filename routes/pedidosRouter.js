@@ -6,7 +6,6 @@ const {
     crearPedido,
     actualizarPedido,
     anularPedido,
-    entregarPedido,
 } = require('../controllers/pedidosController');
 
 // Pedidos del vendedor logueado (hojas Pedidos y Pedidos_Detalle). Al entregarse pasan a venta.
@@ -29,8 +28,6 @@ router.put('/:id', verificarTokenVendedor, actualizarPedido);
 // PATCH /bill/api/vendedores/pedidos/:id/anular  (JSON: { motivo? }; solo pedidos pendientes)
 router.patch('/:id/anular', verificarTokenVendedor, anularPedido);
 
-// POST /bill/api/vendedores/pedidos/:id/entrega  (crea la venta, su número de factura y su deuda)
-// JSON: { fecha_entrega?, nota_entrega?, productos?: [{ id_detalle, cantidad }] (sin productos = todo lo pedido) }
-router.post('/:id/entrega', verificarTokenVendedor, entregarPedido);
+// La entrega (emitir la factura) la hace solo el administrador: POST /admin/pedidos/:id/entrega
 
 module.exports = router;
