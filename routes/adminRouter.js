@@ -15,10 +15,15 @@ const {
     reabrirComision,
     listarMetas,
     guardarMeta,
+    listarCuotas,
+    guardarCuotas,
 } = require('../controllers/comisionesController');
 const { consultarVentasAdmin } = require('../controllers/consultasController');
 const { listarClientesAdmin, obtenerHistorialAdmin } = require('../controllers/clientesController');
 const { listarPedidosAdmin, entregarPedido } = require('../controllers/pedidosController');
+const {
+    conTipo, listarRegistros, crearRegistro, actualizarRegistro, eliminarRegistro,
+} = require('../controllers/nivelesPlazosController');
 
 // Consultas del administrador sobre todos los vendedores (nivel_acceso Administrador en la hoja Usuarios)
 const router = Router();
@@ -70,10 +75,30 @@ router.delete('/comisiones/:id', soloAdministrador, reabrirComision);
 // GET /bill/api/vendedores/admin/metas?periodo=YYYY-MM
 router.get('/metas', soloAdministrador, listarMetas);
 
-// PUT /bill/api/vendedores/admin/metas  (JSON: { id_vendedor, periodo, meta_monto, sueldo_base, observaciones? })
+// PUT /bill/api/vendedores/admin/metas  (sueldo base del mes; JSON: { id_vendedor, periodo, sueldo_base, observaciones? })
 router.put('/metas', soloAdministrador, guardarMeta);
+
+// GET /bill/api/vendedores/admin/cuotas  (cuota mensual y valor representativo de cada producto, para la bonificación)
+router.get('/cuotas', soloAdministrador, listarCuotas);
+
+// PUT /bill/api/vendedores/admin/cuotas  (JSON: { cuotas: [{ id_producto, cuota_mensual, valor_representativo }] })
+router.put('/cuotas', soloAdministrador, guardarCuotas);
 
 // GET /bill/api/vendedores/admin/consultas/ventas?desde=&hasta=&agrupar=dia|semana|mes&id_vendedor=
 router.get('/consultas/ventas', soloAdministrador, consultarVentasAdmin);
+
+// Niveles y plazos del motor de precios (hojas Niveles y Plazos). Cada uno trae usos: { precios, historial }
+// GET    /bill/api/vendedores/admin/niveles      POST /admin/niveles  JSON: { id_nivel, nombre, unidades_desde, unidades_hasta?, estado? }
+// PUT    /bill/api/vendedores/admin/niveles/:id  (parcial; el código no cambia)
+// DELETE /bill/api/vendedores/admin/niveles/:id  (borra también sus precios; 409 si ya lo usan pedidos o ventas)
+// Lo mismo en /admin/plazos  JSON: { id_plazo, nombre, dias_desde, dias_hasta?, se_factura?, orden?, estado? }
+// (409 al eliminar si ya lo usan pagos o comisiones)
+for (const tipo of ['niveles', 'plazos']) {
+    const conEste = [...soloAdministrador, conTipo(tipo)];
+    router.get(`/${tipo}`, conEste, listarRegistros);
+    router.post(`/${tipo}`, conEste, crearRegistro);
+    router.put(`/${tipo}/:id`, conEste, actualizarRegistro);
+    router.delete(`/${tipo}/:id`, conEste, eliminarRegistro);
+}
 
 module.exports = router;

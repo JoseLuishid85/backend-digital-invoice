@@ -25,11 +25,11 @@ router.get('/configuracion', verificarTokenVendedor, obtenerConfiguracion);
 router.get('/:id', verificarTokenVendedor, obtenerProducto);
 
 // POST /bill/api/vendedores/productos  (genera id_producto PROD-001, PROD-002...)
-// body JSON: { nombre, descripcion?, stock?, comision? }  (sin precios: ver PUT /:id/precios)
+// body JSON: { nombre, descripcion?, stock? }  (sin precios: ver PUT /:id/precios)
 router.post('/', verificarTokenVendedor, crearProducto);
 
 // PUT /bill/api/vendedores/productos/:id
-// body JSON: { nombre?, descripcion?, stock?, estado?, comision? }
+// body JSON: { nombre?, descripcion?, stock?, estado? }
 router.put('/:id', verificarTokenVendedor, actualizarProducto);
 
 // PUT /bill/api/vendedores/productos/:id/precios  (solo el administrador cambia precios)

@@ -18,7 +18,8 @@ const HOJAS = {
     tasas: 'Tasas_Dolar',
     metas: 'Metas', // meta de cobro y sueldo base de cada vendedor por mes
     comisiones: 'Comisiones', // liquidación de cada vendedor por mes
-    comisionesDetalle: 'Comisiones_Detalle', // de qué pago y producto sale cada comisión
+    comisionesDetalle: 'Comisiones_Detalle', // (sistema anterior) de qué pago y producto sale cada comisión
+    bonificacionesDetalle: 'Bonificaciones_Detalle', // cuota, unidades y bonificación de cada producto por mes cerrado
     logs: 'Historial_Logs',
 };
 

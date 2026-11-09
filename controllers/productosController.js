@@ -4,7 +4,6 @@ const {
 } = require('../services/googleSheetsService');
 const { registrarLog } = require('../services/historialService');
 const { aMonto, aMontoOpcional, redondear, mismoId, aTexto, responderError } = require('../utils/cartera');
-const { COLUMNA_COMISION } = require('../utils/comisiones');
 const {
     MONEDAS, COLUMNAS_PRECIOS, HOJAS_PRECIOS, aMoneda, clavePrecio, configuracionDe, configuracionPublica,
     preciosFacturaPorNivel, preciosCobroPorNivel, preciosDelProducto,
@@ -12,15 +11,16 @@ const {
 
 // En la hoja el estado se escribe con mayúscula inicial (Activo / Inactivo)
 const ESTADOS_PRODUCTO = { activo: 'Activo', inactivo: 'Inactivo' };
-const MAXIMO_COMISION = 100;
 const CAMPOS_PRECIO = ['ajuste_pct', 'ajuste_monto', 'precio_final', 'ganancia_pct'];
 
-// Producto listo para responder: stock y comisión como número, sin el número de fila.
+// Producto listo para responder: stock como número, sin el número de fila (y sin la columna comision del sistema
+// anterior: la bonificación usa cuota_mensual y valor_representativo, que se editan en /admin/cuotas).
 // Con la configuración del motor agrega precios_factura (precio de factura por nivel: { L1: ..., L2: ... }) y
 // precios_cobro (por nivel, plazo y moneda: { L1: { CONT: { USD, VES } } }).
-const formatearProducto = ({ _fila, ...producto }, config = null) => ({
+const formatearProducto = ({ _fila, comision, ...producto }, config = null) => ({
     ...producto,
-    [COLUMNA_COMISION]: aMontoOpcional(producto[COLUMNA_COMISION]),
+    cuota_mensual: aMontoOpcional(producto.cuota_mensual),
+    valor_representativo: aMontoOpcional(producto.valor_representativo),
     stock: aMonto(producto.stock),
     ...(config ? {
         precios_factura: preciosFacturaPorNivel(config, producto.id_producto),
@@ -34,15 +34,6 @@ const leerNumero = (valor, vacio = null, negativos = false) => {
     if (texto === '') return vacio;
     const n = Number(texto);
     return Number.isFinite(n) && (negativos || n >= 0) ? n : null;
-};
-
-// % de comisión del vendedor (0 a 100; vacío = sin comisión): { valor } o { error }
-const leerComision = (valor) => {
-    const n = leerNumero(valor, '');
-    if (n === null || n > MAXIMO_COMISION) {
-        return { error: `La comisión debe ser un porcentaje entre 0 y ${MAXIMO_COMISION}.` };
-    }
-    return { valor: n === '' ? '' : redondear(n) };
 };
 
 // Matriz de precios del producto: [{ id_nivel, id_plazo, moneda, precio_final, ajuste_pct?, ajuste_monto?,
@@ -163,22 +154,18 @@ const productoCompleto = async (idProducto) => {
 };
 
 // POST /bill/api/vendedores/productos
-// body JSON: { nombre, descripcion?, stock?, comision? (%) }. Los precios no van aquí: los ajusta el administrador
-// con PUT /:id/precios (si llegan, se ignoran).
+// body JSON: { nombre, descripcion?, stock? }. Los precios no van aquí: los ajusta el administrador con
+// PUT /:id/precios (si llegan, se ignoran); la cuota de bonificación, con PUT /admin/cuotas.
 const crearProducto = async (req, res) => {
     const cuerpo = req.body || {};
     const nombre = aTexto(cuerpo.nombre);
     const stock = leerNumero(cuerpo.stock, 0);
-    const comision = leerComision(cuerpo[COLUMNA_COMISION]);
 
     if (!nombre) {
         return res.status(400).json({ ok: false, mensaje: 'El nombre del producto es obligatorio.' });
     }
     if (stock === null) {
         return res.status(400).json({ ok: false, mensaje: 'El stock debe ser un número mayor o igual a 0.' });
-    }
-    if (comision.error) {
-        return res.status(400).json({ ok: false, mensaje: comision.error });
     }
 
     try {
@@ -195,10 +182,6 @@ const crearProducto = async (req, res) => {
                 stock,
                 estado: ESTADOS_PRODUCTO.activo,
             };
-            if (comision.valor !== '') {
-                exigirColumnas(HOJAS.productos, encabezados, [COLUMNA_COMISION]);
-                fila[COLUMNA_COMISION] = comision.valor;
-            }
             await agregarFila(HOJAS.productos, fila, encabezados);
             return { idProducto: fila.id_producto };
         });
@@ -216,7 +199,7 @@ const crearProducto = async (req, res) => {
 };
 
 // PUT /bill/api/vendedores/productos/:id
-// body JSON: { nombre?, descripcion?, stock?, estado?, comision? }
+// body JSON: { nombre?, descripcion?, stock?, estado? }
 // Solo cambia los campos que vienen en el body. Los precios no se tocan aquí (PUT /:id/precios, solo administrador).
 const actualizarProducto = async (req, res) => {
     const idProducto = aTexto(req.params.id);
@@ -228,11 +211,6 @@ const actualizarProducto = async (req, res) => {
     }
     if ('nombre' in cambios && !cambios.nombre) {
         return res.status(400).json({ ok: false, mensaje: 'El nombre del producto es obligatorio.' });
-    }
-    if (COLUMNA_COMISION in cuerpo) {
-        const comision = leerComision(cuerpo[COLUMNA_COMISION]);
-        if (comision.error) return res.status(400).json({ ok: false, mensaje: comision.error });
-        cambios[COLUMNA_COMISION] = comision.valor;
     }
     if ('stock' in cuerpo) {
         cambios.stock = leerNumero(cuerpo.stock, 0);
