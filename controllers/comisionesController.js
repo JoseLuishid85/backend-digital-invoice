@@ -8,16 +8,16 @@ const {
     responderError,
 } = require('../utils/cartera');
 const {
-    ESTADOS_COMISION, PISO_BONIFICACION, TOPE_BONIFICACION, COLUMNAS_CUOTA, aPeriodo, periodoActual, metaVigente,
-    cuotaDe, calcularLiquidacion, liquidacionGuardada, resumenLiquidacion,
+    ESTADOS_COMISION, PISO_BONIFICACION, TOPE_BONIFICACION, COLUMNAS_CUOTA, COLUMNAS_CIERRE, COLUMNAS_REGLAS,
+    COLUMNA_PCT_PLAZO, DESCRIPCION_REGLAS, aPeriodo, periodoActual, metaVigente, leerReglas, cuotaDe,
+    calcularLiquidacion, tieneActividad, liquidacionGuardada, filaCierre, resumenLiquidacion,
 } = require('../utils/comisiones');
 const { aFecha, fechaHoy } = require('../utils/valores');
 
 // Columnas que escribe el cierre del mes en cada hoja (se comprueban antes de escribir nada).
 // Las columnas del sistema anterior (meta_monto, monto_cobrado, comision_*) pueden seguir en la hoja: quedan vacías.
 const COLUMNAS = {
-    [HOJAS.comisiones]: ['id_comision', 'id_vendedor', 'periodo', 'sueldo_base', 'unidades_vendidas', 'bonificacion',
-        'total_a_pagar', 'estado', 'fecha_cierre', 'cerrado_por', 'fecha_pago'],
+    [HOJAS.comisiones]: COLUMNAS_CIERRE,
     [HOJAS.bonificacionesDetalle]: ['id_detalle', 'id_comision', 'id_producto', 'producto', 'cuota_mensual', 'unidades',
         'cumplimiento', 'porcentaje_aplicado', 'valor_representativo', 'sueldo_base', 'bonificacion'],
 };
@@ -26,7 +26,7 @@ const COLUMNAS_META = ['id_meta', 'id_vendedor', 'periodo', 'sueldo_base', 'obse
 // Hojas que hacen falta para calcular o mostrar una liquidación
 const HOJAS_CALCULO = [
     HOJAS.usuarios, HOJAS.ventas, HOJAS.ventasDetalle, HOJAS.productos, HOJAS.metas, HOJAS.comisiones,
-    HOJAS.bonificacionesDetalle,
+    HOJAS.bonificacionesDetalle, HOJAS.clientes, HOJAS.visitas, HOJAS.reglasBonificacion, HOJAS.plazos,
 ];
 
 const filasCalculo = (hojas) => ({
@@ -34,10 +34,14 @@ const filasCalculo = (hojas) => ({
     detalles: hojas[HOJAS.ventasDetalle].filas,
     catalogo: hojas[HOJAS.productos].filas,
     metas: hojas[HOJAS.metas].filas,
+    clientes: hojas[HOJAS.clientes].filas,
+    visitas: hojas[HOJAS.visitas].filas,
 });
 
-// Reglas que el frontend muestra junto a la liquidación
-const REGLAS = { piso: PISO_BONIFICACION, tope: TOPE_BONIFICACION };
+const reglasDe = (hojas) => leerReglas(hojas[HOJAS.reglasBonificacion].filas, hojas[HOJAS.plazos].filas);
+
+// Reglas de la cuota de productos (la página de cuotas no necesita las demás)
+const REGLAS_CUOTA = { piso: PISO_BONIFICACION, tope: TOPE_BONIFICACION };
 
 // Periodo de la consulta (?periodo=YYYY-MM, por defecto el mes en curso) o null si no es válido
 const periodoConsulta = (valor) => (aTexto(valor) ? aPeriodo(valor) : periodoActual());
@@ -46,20 +50,24 @@ const filaComision = (hojas, idVendedor, periodo) => hojas[HOJAS.comisiones].fil
     .find((c) => mismoId(c.id_vendedor, idVendedor) && aPeriodo(c.periodo) === periodo);
 
 // Liquidación de un vendedor en el periodo: la guardada si el mes ya se cerró; si no, calculada en el momento
-const liquidacionDe = (hojas, idVendedor, periodo) => {
+const liquidacionDe = (hojas, idVendedor, periodo, reglas) => {
     const guardada = filaComision(hojas, idVendedor, periodo);
     return guardada
         ? liquidacionGuardada(guardada, hojas[HOJAS.bonificacionesDetalle].filas)
-        : calcularLiquidacion(idVendedor, periodo, filasCalculo(hojas));
+        : calcularLiquidacion(idVendedor, periodo, filasCalculo(hojas), reglas);
 };
 
 // Un vendedor entra en la liquidación del mes si está activo o, inactivo, si tiene algo que liquidar
-const participa = (vendedor, liquidacion) => vendedor.activo || liquidacion.id_comision
-    || liquidacion.unidades_vendidas > 0;
+const participa = (vendedor, liquidacion) => vendedor.activo || liquidacion.id_comision || tieneActividad(liquidacion);
 
+const montoDe = (lista, bono) => redondear(lista.reduce((suma, l) => suma + (bono(l) || 0), 0));
 const totalesDe = (liquidaciones) => ({
     sueldos: sumar(liquidaciones, 'sueldo_base'),
     bonificaciones: sumar(liquidaciones, 'bonificacion'),
+    cuotas: sumar(liquidaciones, 'bono_cuotas'),
+    plazo: montoDe(liquidaciones, (l) => l.bono_plazo.monto),
+    visitas: montoDe(liquidaciones, (l) => l.bono_visitas.monto),
+    clientes_nuevos: montoDe(liquidaciones, (l) => l.bono_clientes_nuevos.monto),
     total: sumar(liquidaciones, 'total_a_pagar'),
 });
 
@@ -71,6 +79,7 @@ const obtenerMiComision = async (req, res) => {
 
     try {
         const hojas = await leerHojas(...HOJAS_CALCULO);
+        const reglas = reglasDe(hojas);
         const idVendedor = req.vendedor.id_vendedor;
         const historial = hojas[HOJAS.comisiones].filas
             .filter((c) => mismoId(c.id_vendedor, idVendedor))
@@ -79,8 +88,8 @@ const obtenerMiComision = async (req, res) => {
 
         return res.json({
             ok: true,
-            reglas: REGLAS,
-            liquidacion: liquidacionDe(hojas, idVendedor, periodo),
+            reglas,
+            liquidacion: liquidacionDe(hojas, idVendedor, periodo, reglas),
             historial,
         });
     } catch (error) {
@@ -96,9 +105,10 @@ const listarComisionesAdmin = async (req, res) => {
 
     try {
         const hojas = await leerHojas(...HOJAS_CALCULO);
+        const reglas = reglasDe(hojas);
         const vendedores = listaVendedores(hojas[HOJAS.usuarios].filas);
         const liquidaciones = vendedores
-            .map((v) => ({ vendedor: v, liquidacion: liquidacionDe(hojas, v.id_vendedor, periodo) }))
+            .map((v) => ({ vendedor: v, liquidacion: liquidacionDe(hojas, v.id_vendedor, periodo, reglas) }))
             .filter(({ vendedor, liquidacion }) => participa(vendedor, liquidacion))
             .map(({ vendedor, liquidacion }) => ({ ...liquidacion, vendedor_nombre: vendedor.nombre, activo: vendedor.activo }));
 
@@ -106,7 +116,7 @@ const listarComisionesAdmin = async (req, res) => {
             ok: true,
             periodo,
             periodo_actual: periodoActual(),
-            reglas: REGLAS,
+            reglas,
             totales: totalesDe(liquidaciones),
             liquidaciones,
         });
@@ -116,9 +126,10 @@ const listarComisionesAdmin = async (req, res) => {
 };
 
 // POST /bill/api/vendedores/admin/comisiones/:periodo/cerrar  (JSON opcional: { id_vendedor })
-// Cierra el mes: guarda la liquidación de cada vendedor que aún no la tiene (o solo la de id_vendedor) y su
-// bonificación por producto (Bonificaciones_Detalle). Todos los vendedores que se cierran deben tener sueldo base
-// (hoja Metas). Las ventas que se emitan después con fecha de ese mes ya no cuentan (habría que reabrirlo).
+// Cierra el mes: guarda la liquidación de cada vendedor que aún no la tiene (o solo la de id_vendedor) con sus cuatro
+// bonificaciones (hoja Comisiones) y la de cada producto (Bonificaciones_Detalle). Todos los vendedores que se
+// cierran deben tener sueldo base (hoja Metas). Las ventas, visitas o clientes que se registren después con fecha de
+// ese mes ya no cuentan (habría que reabrirlo).
 const cerrarComisiones = async (req, res) => {
     const periodo = aPeriodo(req.params.periodo);
     const soloVendedor = aTexto(req.body?.id_vendedor);
@@ -130,6 +141,7 @@ const cerrarComisiones = async (req, res) => {
     try {
         const resultado = await conBloqueo(async () => {
             const hojas = await leerHojas(...HOJAS_CALCULO);
+            const reglas = reglasDe(hojas);
             Object.entries(COLUMNAS).forEach(([hoja, columnas]) => exigirColumnas(hoja, hojas[hoja].encabezados, columnas));
 
             const vendedores = listaVendedores(hojas[HOJAS.usuarios].filas)
@@ -138,10 +150,10 @@ const cerrarComisiones = async (req, res) => {
 
             const porCerrar = vendedores
                 .filter((v) => !filaComision(hojas, v.id_vendedor, periodo))
-                .map((v) => ({ vendedor: v, liquidacion: calcularLiquidacion(v.id_vendedor, periodo, filasCalculo(hojas)) }))
+                .map((v) => ({ vendedor: v, liquidacion: calcularLiquidacion(v.id_vendedor, periodo, filasCalculo(hojas), reglas) }))
                 .filter(({ vendedor, liquidacion }) => participa(vendedor, liquidacion))
-                // Un vendedor sin sueldo y sin ventas se deja abierto (no tiene nada que pagar todavía)
-                .filter(({ liquidacion: l }) => l.tiene_meta || l.unidades_vendidas > 0);
+                // Un vendedor sin sueldo y sin actividad se deja abierto (no tiene nada que pagar todavía)
+                .filter(({ liquidacion: l }) => l.tiene_meta || tieneActividad(l));
             if (!porCerrar.length) return { status: 409, mensaje: `El mes ${periodo} ya está cerrado.` };
 
             const sinMeta = porCerrar.filter(({ liquidacion }) => !liquidacion.tiene_meta).map(({ vendedor }) => vendedor.nombre);
@@ -156,10 +168,7 @@ const cerrarComisiones = async (req, res) => {
                 id_comision: ids[i],
                 id_vendedor: l.id_vendedor,
                 periodo,
-                sueldo_base: l.sueldo_base,
-                unidades_vendidas: l.unidades_vendidas,
-                bonificacion: l.bonificacion,
-                total_a_pagar: l.total_a_pagar,
+                ...filaCierre(l),
                 estado: ESTADOS_COMISION.cerrada,
                 fecha_cierre: fechaCierre,
                 cerrado_por: req.vendedor.id_vendedor,
@@ -377,7 +386,7 @@ const respuestaCuotas = (filas) => {
         // Suma de los valores representativos de los productos activos con cuota (lo normal es 100 %)
         suma_valores: redondear(productos.filter((p) => p.estado === 'activo' && p.cuota_mensual > 0)
             .reduce((suma, p) => suma + (p.valor_representativo ?? 0), 0)),
-        reglas: REGLAS,
+        reglas: REGLAS_CUOTA,
     };
 };
 
@@ -454,7 +463,108 @@ const guardarCuotas = async (req, res) => {
     }
 };
 
+// Reglas listas para responder: el plazo activo, el % de cada plazo y las metas
+const respuestaReglas = (hojas) => ({ reglas: reglasDe(hojas) });
+
+// GET /bill/api/vendedores/admin/bonificaciones/reglas
+// { reglas: { piso, tope, plazos: [{ id_plazo, nombre, dias_desde, dias_hasta, activo, porcentaje }], plazo,
+//   visitas: { meta, bono }, clientes_nuevos: { meta, bono } } }
+const obtenerReglas = async (req, res) => {
+    try {
+        return res.json({ ok: true, ...respuestaReglas(await leerHojas(HOJAS.reglasBonificacion, HOJAS.plazos)) });
+    } catch (error) {
+        return responderError(res, error, 'Error al obtener las reglas de bonificación');
+    }
+};
+
+// PUT /bill/api/vendedores/admin/bonificaciones/reglas
+// body JSON: { id_plazo ('' = sin bonificación por plazo), porcentajes: { [id_plazo]: % }, meta_visitas, bono_visitas,
+//   meta_clientes_nuevos, bono_clientes_nuevos } (todo opcional: solo cambia lo que viene)
+// Los meses ya cerrados no cambian: guardaron las reglas que tenían.
+const guardarReglas = async (req, res) => {
+    const body = req.body ?? {};
+    const claves = {};
+    for (const clave of ['meta_visitas', 'bono_visitas', 'meta_clientes_nuevos', 'bono_clientes_nuevos']) {
+        if (body[clave] === undefined) continue;
+        const valor = leerMonto(body[clave]);
+        if (valor === null) return res.status(400).json({ ok: false, mensaje: `${clave} debe ser un número mayor o igual a 0.` });
+        claves[clave] = valor;
+    }
+    const porcentajes = body.porcentajes ?? {};
+    if (typeof porcentajes !== 'object' || Array.isArray(porcentajes)) {
+        return res.status(400).json({ ok: false, mensaje: 'porcentajes debe ser un objeto { id_plazo: % }.' });
+    }
+    const pcts = {};
+    for (const [idPlazo, valor] of Object.entries(porcentajes)) {
+        const pct = leerOpcional(valor);
+        if (pct === null || pct > 100) {
+            return res.status(400).json({ ok: false, mensaje: `El % del plazo ${idPlazo} debe estar entre 0 y 100.` });
+        }
+        pcts[idPlazo] = pct;
+    }
+
+    try {
+        const resultado = await conBloqueo(async () => {
+            const hojas = await leerHojas(HOJAS.reglasBonificacion, HOJAS.plazos);
+            const reglasHoja = hojas[HOJAS.reglasBonificacion];
+            const plazos = hojas[HOJAS.plazos];
+            exigirColumnas(HOJAS.reglasBonificacion, reglasHoja.encabezados, COLUMNAS_REGLAS);
+            if (Object.keys(pcts).length) exigirColumnas(HOJAS.plazos, plazos.encabezados, [COLUMNA_PCT_PLAZO]);
+
+            if (body.id_plazo !== undefined) {
+                const idPlazo = aTexto(body.id_plazo);
+                const plazo = plazos.filas.find((p) => mismoId(p.id_plazo, idPlazo));
+                if (idPlazo && !plazo) return { status: 404, mensaje: `Plazo ${idPlazo} no encontrado.` };
+                claves.plazo_bonificacion = plazo ? aTexto(plazo.id_plazo) : '';
+            }
+
+            const cambiosPlazos = [];
+            for (const [idPlazo, pct] of Object.entries(pcts)) {
+                const fila = plazos.filas.find((p) => mismoId(p.id_plazo, idPlazo));
+                if (!fila) return { status: 404, mensaje: `Plazo ${idPlazo} no encontrado.` };
+                if (String(aMontoOpcional(fila[COLUMNA_PCT_PLAZO]) ?? '') !== String(pct)) {
+                    cambiosPlazos.push({ fila: fila._fila, cambios: { [COLUMNA_PCT_PLAZO]: pct } });
+                    fila[COLUMNA_PCT_PLAZO] = pct;
+                }
+            }
+
+            const cambiosReglas = [];
+            const nuevas = [];
+            for (const [clave, valor] of Object.entries(claves)) {
+                const fila = reglasHoja.filas.find((f) => aTexto(f.clave).toLowerCase() === clave);
+                if (fila) {
+                    if (aTexto(fila.valor) !== String(valor)) {
+                        cambiosReglas.push({ fila: fila._fila, cambios: { valor } });
+                        fila.valor = valor;
+                    }
+                } else {
+                    const nueva = { clave, valor, descripcion: DESCRIPCION_REGLAS[clave] };
+                    nuevas.push(nueva);
+                    reglasHoja.filas.push(nueva);
+                }
+            }
+
+            await actualizarFilas(HOJAS.plazos, cambiosPlazos, plazos.encabezados);
+            await actualizarFilas(HOJAS.reglasBonificacion, cambiosReglas, reglasHoja.encabezados);
+            if (nuevas.length) await agregarFilas(HOJAS.reglasBonificacion, nuevas, reglasHoja.encabezados);
+            return { hojas, cambios: cambiosPlazos.length + cambiosReglas.length + nuevas.length };
+        });
+        if (resultado.status) return res.status(resultado.status).json({ ok: false, mensaje: resultado.mensaje });
+
+        registrarLog(req.vendedor.id_vendedor, 'guardar_reglas_bonificacion', { ...claves, porcentajes: pcts });
+        return res.json({
+            ok: true,
+            mensaje: resultado.cambios ? 'Reglas de bonificación guardadas.' : 'No había cambios.',
+            ...respuestaReglas(resultado.hojas),
+        });
+    } catch (error) {
+        return responderError(res, error, 'Error al guardar las reglas de bonificación');
+    }
+};
+
 module.exports = {
+    obtenerReglas,
+    guardarReglas,
     listarCuotas,
     guardarCuotas,
     obtenerMiComision,

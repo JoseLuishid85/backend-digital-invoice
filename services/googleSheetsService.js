@@ -16,10 +16,12 @@ const HOJAS = {
     precios: 'Precios', // precio de cada producto por nivel, plazo y moneda
     bancos: 'Bancos',
     tasas: 'Tasas_Dolar',
-    metas: 'Metas', // meta de cobro y sueldo base de cada vendedor por mes
+    metas: 'Metas', // sueldo base de cada vendedor por mes (meta_monto ya no se usa)
     comisiones: 'Comisiones', // liquidación de cada vendedor por mes
     comisionesDetalle: 'Comisiones_Detalle', // (sistema anterior) de qué pago y producto sale cada comisión
     bonificacionesDetalle: 'Bonificaciones_Detalle', // cuota, unidades y bonificación de cada producto por mes cerrado
+    reglasBonificacion: 'Reglas_Bonificacion', // clave/valor: plazo activo, metas y montos de visitas y clientes nuevos
+    visitas: 'Visitas', // visitas del vendedor a sus clientes (meta de clientes visitados)
     logs: 'Historial_Logs',
 };
 

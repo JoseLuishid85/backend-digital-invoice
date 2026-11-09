@@ -17,8 +17,11 @@ const {
     guardarMeta,
     listarCuotas,
     guardarCuotas,
+    obtenerReglas,
+    guardarReglas,
 } = require('../controllers/comisionesController');
 const { consultarVentasAdmin } = require('../controllers/consultasController');
+const { listarVisitasAdmin } = require('../controllers/visitasController');
 const { listarClientesAdmin, obtenerHistorialAdmin } = require('../controllers/clientesController');
 const { listarPedidosAdmin, entregarPedido } = require('../controllers/pedidosController');
 const {
@@ -77,6 +80,16 @@ router.get('/metas', soloAdministrador, listarMetas);
 
 // PUT /bill/api/vendedores/admin/metas  (sueldo base del mes; JSON: { id_vendedor, periodo, sueldo_base, observaciones? })
 router.put('/metas', soloAdministrador, guardarMeta);
+
+// GET /bill/api/vendedores/admin/bonificaciones/reglas  (plazo activo y su %, metas de visitas y de clientes nuevos)
+router.get('/bonificaciones/reglas', soloAdministrador, obtenerReglas);
+
+// PUT /bill/api/vendedores/admin/bonificaciones/reglas
+// (JSON: { id_plazo, porcentajes: { [id_plazo]: % }, meta_visitas, bono_visitas, meta_clientes_nuevos, bono_clientes_nuevos })
+router.put('/bonificaciones/reglas', soloAdministrador, guardarReglas);
+
+// GET /bill/api/vendedores/admin/visitas?periodo=YYYY-MM&id_vendedor=  (visitas de todos los vendedores)
+router.get('/visitas', soloAdministrador, listarVisitasAdmin);
 
 // GET /bill/api/vendedores/admin/cuotas  (cuota mensual y valor representativo de cada producto, para la bonificación)
 router.get('/cuotas', soloAdministrador, listarCuotas);
