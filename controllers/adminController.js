@@ -18,8 +18,6 @@ const {
 } = require('../utils/cartera');
 const { aFecha, fechaHoy } = require('../utils/valores');
 
-const LARGO_LISTAS = 5;
-
 // Deuda con su vendedor: la hoja Deudas no lo guarda, sale del cliente
 const deudaConVendedor = (deuda, clientes, vendedores) => {
     const idVendedor = aTexto(clientes.find((c) => mismoId(c.id_cliente, deuda.id_cliente))?.id_vendedor);
@@ -28,6 +26,25 @@ const deudaConVendedor = (deuda, clientes, vendedores) => {
         id_vendedor: idVendedor,
         vendedor_nombre: nombreVendedor(vendedores, idVendedor),
     };
+};
+
+// Datos de contacto del cliente para la ficha de la factura
+const datosCliente = (clientes, idCliente) => {
+    const cliente = clientes.find((c) => mismoId(c.id_cliente, idCliente));
+    if (!cliente) return null;
+    return {
+        id_cliente: aTexto(cliente.id_cliente),
+        nombre_comercial: aTexto(cliente.nombre_comercial),
+        contacto_nombre: aTexto(cliente.contacto_nombre),
+        telefono: aTexto(cliente.telefono),
+        direccion: aTexto(cliente.direccion),
+    };
+};
+
+// Venta de una deuda: Ventas guarda el id_deuda (la hoja Deudas no guarda la venta)
+const ventaDeDeuda = (deuda, ventas, clientes, detalles) => {
+    const venta = ventas.find((v) => aTexto(v.id_deuda) && mismoId(v.id_deuda, deuda.id_deuda));
+    return venta ? formatearVenta(venta, clientes, detalles) : null;
 };
 
 const ventaConVendedor = (venta, clientes, detalles, vendedores) => ({
@@ -59,7 +76,9 @@ const obtenerResumenAdmin = async (req, res) => {
     const hoy = fechaHoy();
 
     try {
-        const hojas = await leerHojas(HOJAS.usuarios, HOJAS.clientes, HOJAS.deudas, HOJAS.pagos, HOJAS.ventas, HOJAS.pedidos);
+        const hojas = await leerHojas(
+            HOJAS.usuarios, HOJAS.clientes, HOJAS.deudas, HOJAS.pagos, HOJAS.ventas, HOJAS.ventasDetalle, HOJAS.pedidos,
+        );
         const vendedores = listaVendedores(hojas[HOJAS.usuarios].filas);
         const clientes = hojas[HOJAS.clientes].filas;
         const deudas = hojas[HOJAS.deudas].filas.map((d) => deudaConVendedor(d, clientes, vendedores));
@@ -97,11 +116,24 @@ const obtenerResumenAdmin = async (req, res) => {
             // Los que más vendieron este mes primero
             vendedores: porVendedor.sort((a, b) => b.ventas_mes.monto - a.ventas_mes.monto
                 || b.por_cobrar.monto - a.por_cobrar.monto),
-            // Las más antiguas primero: son las más urgentes
+            // Todas, las más antiguas primero (son las más urgentes), con sus abonos para el modal del panel
             deudas_vencidas: deudas
                 .filter((d) => d.vencida)
                 .sort((a, b) => aTexto(a.fecha_vencimiento).localeCompare(aTexto(b.fecha_vencimiento)))
-                .slice(0, LARGO_LISTAS),
+                .map((d) => ({
+                    ...conCobros(d, pagos),
+                    cliente: datosCliente(clientes, d.id_cliente),
+                    // Venta que originó la factura (con sus productos); null en las deudas cargadas a mano
+                    venta: ventaDeDeuda(d, ventas, clientes, hojas[HOJAS.ventasDetalle].filas),
+                    abonos: pagos
+                        .filter((p) => mismoId(p.id_deuda, d.id_deuda))
+                        .map((p) => ({
+                            ...formatearPago(p, clientes),
+                            numero_factura: d.numero_factura,
+                            vendedor_nombre: d.vendedor_nombre,
+                        }))
+                        .sort(masRecientePrimero('fecha_pago', 'id_pago')),
+                })),
         });
     } catch (error) {
         return responderError(res, error, 'Error al obtener el panel del administrador');

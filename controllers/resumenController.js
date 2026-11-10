@@ -6,6 +6,7 @@ const {
     clientesDelVendedor,
     formatearDeuda,
     formatearPedido,
+    conCobros,
     responderError,
 } = require('../utils/cartera');
 const { fechaHoy } = require('../utils/valores');
@@ -52,9 +53,10 @@ const obtenerResumen = async (req, res) => {
             entregas_pendientes: porEntregar
                 .sort((a, b) => aTexto(a.fecha_pedido).localeCompare(aTexto(b.fecha_pedido)))
                 .slice(0, LARGO_LISTAS),
+            // Todas, con lo cobrado y el descuento de sus pagos (la tabla del inicio los muestra)
             deudas_vencidas: vencidas
                 .sort((a, b) => aTexto(a.fecha_vencimiento).localeCompare(aTexto(b.fecha_vencimiento)))
-                .slice(0, LARGO_LISTAS),
+                .map((d) => conCobros(d, pagos)),
         });
     } catch (error) {
         return responderError(res, error, 'Error al obtener el resumen');
