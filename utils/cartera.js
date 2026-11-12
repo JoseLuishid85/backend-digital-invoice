@@ -43,6 +43,7 @@ const listaVendedores = (usuarios) => usuarios
     .map((u) => ({
         id_vendedor: aTexto(u.id_usuario),
         nombre: aTexto(u.nombre) || aTexto(u.email),
+        cod_vendedor: aTexto(u.cod_vendedor), // código del vendedor en Saint (CodVend); '' si no está enlazado
         activo: usuarioActivo(u),
     }))
     .sort((a, b) => a.nombre.localeCompare(b.nombre, 'es'));

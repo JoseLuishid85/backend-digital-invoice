@@ -8,6 +8,7 @@ const {
     actualizarPrecios,
     eliminarProducto,
     obtenerConfiguracion,
+    listarInventarioSaint,
 } = require('../controllers/productosController');
 
 // Catálogo de productos (hoja Productos) y sus precios (hojas Niveles, Plazos y Precios), compartido por todos
@@ -21,15 +22,19 @@ router.get('/', verificarTokenVendedor, listarProductos);
 // Va antes de /:id para que "configuracion" no se tome como un ID
 router.get('/configuracion', verificarTokenVendedor, obtenerConfiguracion);
 
+// GET /bill/api/vendedores/productos/inventario-saint  (solo administrador: inventario de Saint y el producto
+// enlazado a cada código). Va antes de /:id
+router.get('/inventario-saint', verificarTokenVendedor, verificarAdministrador, listarInventarioSaint);
+
 // GET /bill/api/vendedores/productos/:id  (con su matriz de precios)
 router.get('/:id', verificarTokenVendedor, obtenerProducto);
 
 // POST /bill/api/vendedores/productos  (genera id_producto PROD-001, PROD-002...)
-// body JSON: { nombre, descripcion?, stock? }  (sin precios: ver PUT /:id/precios)
+// body JSON: { nombre, descripcion?, stock?, codigo? }  (sin precios: ver PUT /:id/precios)
 router.post('/', verificarTokenVendedor, crearProducto);
 
 // PUT /bill/api/vendedores/productos/:id
-// body JSON: { nombre?, descripcion?, stock?, estado? }
+// body JSON: { nombre?, descripcion?, stock?, codigo?, estado? }  (codigo = código del producto en Saint)
 router.put('/:id', verificarTokenVendedor, actualizarProducto);
 
 // PUT /bill/api/vendedores/productos/:id/precios  (solo el administrador cambia precios)

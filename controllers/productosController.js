@@ -8,6 +8,7 @@ const {
     MONEDAS, COLUMNAS_PRECIOS, HOJAS_PRECIOS, aMoneda, clavePrecio, configuracionDe, configuracionPublica,
     preciosFacturaPorNivel, preciosCobroPorNivel, preciosDelProducto,
 } = require('../utils/precios');
+const { conInventarioSaint, leerInventarioSaint, configurado: saintConfigurado } = require('../utils/inventarioSaint');
 
 // En la hoja el estado se escribe con mayúscula inicial (Activo / Inactivo)
 const ESTADOS_PRODUCTO = { activo: 'Activo', inactivo: 'Inactivo' };
@@ -105,6 +106,44 @@ const guardarMatriz = async (idProducto, precios, hojaPrecios) => {
 
 const mismoNombre = (producto, nombre) => aTexto(producto.nombre).toLowerCase() === nombre.toLowerCase();
 
+// Código del producto en Saint (p. ej. PT100HTP), en mayúsculas; vacío = sin enlazar
+const leerCodigo = (valor) => aTexto(valor).toUpperCase();
+
+// { status, mensaje } si el código no se puede usar: falta la columna en Productos o ya lo tiene otro producto
+const problemaCodigo = (otros, encabezados, codigo) => {
+    if (!codigo) return null;
+    if (!encabezados.includes('codigo')) {
+        return { status: 500, mensaje: 'La hoja "Productos" no tiene la columna codigo. Corre node scripts/prepararSaint.js.' };
+    }
+    const repetido = otros.find((p) => mismoId(p.codigo, codigo));
+    return repetido ? { status: 409, mensaje: `El código ${codigo} ya está enlazado a "${aTexto(repetido.nombre)}".` } : null;
+};
+
+// GET /bill/api/vendedores/productos/inventario-saint  (solo administrador)
+// Inventario de Saint con el producto de la app enlazado a cada código (null si ninguno), para enlazarlos
+const listarInventarioSaint = async (req, res) => {
+    if (!saintConfigurado()) {
+        return res.json({ ok: true, configurado: false, inventario: [] });
+    }
+    try {
+        const [inventario, hojas] = await Promise.all([
+            leerInventarioSaint({ forzar: true }),
+            leerHojas(HOJAS.productos),
+        ]);
+        const productos = hojas[HOJAS.productos].filas;
+        const lista = [...inventario.values()].map((registro) => {
+            const producto = productos.find((p) => mismoId(p.codigo, registro.codigo));
+            return {
+                ...registro,
+                producto_app: producto ? { id_producto: aTexto(producto.id_producto), nombre: aTexto(producto.nombre) } : null,
+            };
+        });
+        return res.json({ ok: true, configurado: true, inventario: lista });
+    } catch (error) {
+        return responderError(res, error, 'Error al leer el inventario de Saint');
+    }
+};
+
 // GET /bill/api/vendedores/productos?estado=&q=
 // Cada producto trae precios_factura: el precio con que se factura en cada nivel ({ L1: ..., L2: ... })
 const listarProductos = async (req, res) => {
@@ -112,11 +151,11 @@ const listarProductos = async (req, res) => {
     const busqueda = aTexto(req.query.q).toLowerCase();
 
     try {
-        const hojas = await leerHojas(HOJAS.productos, ...HOJAS_PRECIOS);
+        const hojas = await conInventarioSaint(await leerHojas(HOJAS.productos, ...HOJAS_PRECIOS));
         const config = configuracionDe(hojas);
         const productos = hojas[HOJAS.productos].filas
             .filter((p) => !estado || aTexto(p.estado).toLowerCase() === estado)
-            .filter((p) => !busqueda || `${p.id_producto} ${p.nombre} ${p.descripcion}`.toLowerCase().includes(busqueda))
+            .filter((p) => !busqueda || `${p.id_producto} ${p.codigo ?? ''} ${p.nombre} ${p.descripcion}`.toLowerCase().includes(busqueda))
             .map((p) => formatearProducto(p, config))
             .sort((a, b) => aTexto(a.nombre).localeCompare(aTexto(b.nombre), 'es'));
 
@@ -130,7 +169,7 @@ const listarProductos = async (req, res) => {
 // Con precios (la matriz completa: una fila por nivel, plazo y moneda) y precios_factura
 const obtenerProducto = async (req, res) => {
     try {
-        const hojas = await leerHojas(HOJAS.productos, ...HOJAS_PRECIOS);
+        const hojas = await conInventarioSaint(await leerHojas(HOJAS.productos, ...HOJAS_PRECIOS));
         const producto = hojas[HOJAS.productos].filas.find((p) => mismoId(p.id_producto, req.params.id));
         if (!producto) {
             return res.status(404).json({ ok: false, mensaje: 'Producto no encontrado.' });
@@ -147,19 +186,20 @@ const obtenerProducto = async (req, res) => {
 
 // Respuesta con el producto y su matriz de precios releída de la hoja
 const productoCompleto = async (idProducto) => {
-    const hojas = await leerHojas(HOJAS.productos, ...HOJAS_PRECIOS);
+    const hojas = await conInventarioSaint(await leerHojas(HOJAS.productos, ...HOJAS_PRECIOS));
     const config = configuracionDe(hojas);
     const producto = hojas[HOJAS.productos].filas.find((p) => mismoId(p.id_producto, idProducto));
     return { ...formatearProducto(producto, config), precios: preciosDelProducto(config, idProducto) };
 };
 
 // POST /bill/api/vendedores/productos
-// body JSON: { nombre, descripcion?, stock? }. Los precios no van aquí: los ajusta el administrador con
+// body JSON: { nombre, descripcion?, stock?, codigo? }. Los precios no van aquí: los ajusta el administrador con
 // PUT /:id/precios (si llegan, se ignoran); la cuota de bonificación, con PUT /admin/cuotas.
 const crearProducto = async (req, res) => {
     const cuerpo = req.body || {};
     const nombre = aTexto(cuerpo.nombre);
     const stock = leerNumero(cuerpo.stock, 0);
+    const codigo = leerCodigo(cuerpo.codigo);
 
     if (!nombre) {
         return res.status(400).json({ ok: false, mensaje: 'El nombre del producto es obligatorio.' });
@@ -174,11 +214,14 @@ const crearProducto = async (req, res) => {
             if (filas.some((p) => mismoNombre(p, nombre))) {
                 return { status: 409, mensaje: 'Ya existe un producto con ese nombre.' };
             }
+            const problema = problemaCodigo(filas, encabezados, codigo);
+            if (problema) return problema;
 
             const fila = {
                 id_producto: siguienteId(filas, 'id_producto', 'PROD'),
                 nombre,
                 descripcion: aTexto(cuerpo.descripcion),
+                codigo,
                 stock,
                 estado: ESTADOS_PRODUCTO.activo,
             };
@@ -199,7 +242,7 @@ const crearProducto = async (req, res) => {
 };
 
 // PUT /bill/api/vendedores/productos/:id
-// body JSON: { nombre?, descripcion?, stock?, estado? }
+// body JSON: { nombre?, descripcion?, stock?, codigo?, estado? }
 // Solo cambia los campos que vienen en el body. Los precios no se tocan aquí (PUT /:id/precios, solo administrador).
 const actualizarProducto = async (req, res) => {
     const idProducto = aTexto(req.params.id);
@@ -212,6 +255,7 @@ const actualizarProducto = async (req, res) => {
     if ('nombre' in cambios && !cambios.nombre) {
         return res.status(400).json({ ok: false, mensaje: 'El nombre del producto es obligatorio.' });
     }
+    if ('codigo' in cuerpo) cambios.codigo = leerCodigo(cuerpo.codigo);
     if ('stock' in cuerpo) {
         cambios.stock = leerNumero(cuerpo.stock, 0);
         if (cambios.stock === null) {
@@ -237,7 +281,13 @@ const actualizarProducto = async (req, res) => {
             if (cambios.nombre && filas.some((p) => !mismoId(p.id_producto, idProducto) && mismoNombre(p, cambios.nombre))) {
                 return { status: 409, mensaje: 'Ya existe un producto con ese nombre.' };
             }
-            await actualizarFila(HOJAS.productos, producto._fila, cambios, encabezados);
+            // Sin la columna codigo, un código vacío no es un cambio
+            if ('codigo' in cambios && !cambios.codigo && !encabezados.includes('codigo')) delete cambios.codigo;
+            if ('codigo' in cambios && !mismoId(producto.codigo, cambios.codigo)) {
+                const problema = problemaCodigo(filas.filter((p) => p !== producto), encabezados, cambios.codigo);
+                if (problema) return problema;
+            }
+            if (Object.keys(cambios).length) await actualizarFila(HOJAS.productos, producto._fila, cambios, encabezados);
             return { idProducto: producto.id_producto };
         });
 
@@ -330,5 +380,5 @@ const obtenerConfiguracion = async (req, res) => {
 
 module.exports = {
     listarProductos, obtenerProducto, crearProducto, actualizarProducto, actualizarPrecios, eliminarProducto,
-    obtenerConfiguracion,
+    obtenerConfiguracion, listarInventarioSaint,
 };

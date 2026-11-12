@@ -93,13 +93,14 @@ const OPCIONES_LECTURA = {
     dateTimeRenderOption: 'FORMATTED_STRING', // fechas como texto
 };
 
-// Lee varias pestañas en una sola llamada. Devuelve { [hoja]: { encabezados, filas } }
-const leerHojas = async (...hojas) => {
+// Lee varias pestañas de un documento en una sola llamada. Devuelve { [hoja]: { encabezados, filas } }.
+// Sirve también para documentos de solo lectura, como el de Saint (la cuenta de servicio necesita acceso de Lector).
+const leerHojasDe = async (spreadsheetId, hojas) => {
     const sheets = obtenerCliente();
     let data;
     try {
         ({ data } = await sheets.spreadsheets.values.batchGet({
-            spreadsheetId: process.env.GOOGLE_SHEETS_ID,
+            spreadsheetId,
             ranges: hojas.map((hoja) => rangoHoja(hoja)),
             ...OPCIONES_LECTURA,
         }));
@@ -118,6 +119,9 @@ const leerHojas = async (...hojas) => {
     });
     return resultado;
 };
+
+// Lee varias pestañas del documento de cartera (GOOGLE_SHEETS_ID)
+const leerHojas = (...hojas) => leerHojasDe(process.env.GOOGLE_SHEETS_ID, hojas);
 
 const leerHoja = async (hoja) => (await leerHojas(hoja))[hoja];
 
@@ -358,6 +362,7 @@ const conBloqueo = (tarea) => {
 module.exports = {
     HOJAS,
     errorConStatus,
+    leerHojasDe,
     leerHojas,
     leerHoja,
     agregarFila,

@@ -1,4 +1,5 @@
 const { HOJAS, leerHojas } = require('../services/googleSheetsService');
+const { conInventarioSaint } = require('../utils/inventarioSaint');
 const { mismoId, aTexto, clientesDelVendedor, listaVendedores, nombreVendedor, responderError } = require('../utils/cartera');
 const {
     leerPeriodo, armarConsulta, leerFiltrosPedidos, armarConsultaPedidos, pagosDeClientes,
@@ -65,7 +66,7 @@ const consultarPedidos = async (req, res) => {
     if (filtros.error) return res.status(400).json({ ok: false, mensaje: filtros.error });
 
     try {
-        const hojas = await leerHojas(...HOJAS_PEDIDOS);
+        const hojas = await conInventarioSaint(await leerHojas(...HOJAS_PEDIDOS));
         const idVendedor = req.vendedor.id_vendedor;
         const todos = hojas[HOJAS.pedidos].filas;
 
@@ -90,7 +91,7 @@ const consultarPedidosAdmin = async (req, res) => {
     const idVendedor = aTexto(req.query.id_vendedor);
 
     try {
-        const hojas = await leerHojas(HOJAS.usuarios, ...HOJAS_PEDIDOS);
+        const hojas = await conInventarioSaint(await leerHojas(HOJAS.usuarios, ...HOJAS_PEDIDOS));
         const vendedores = listaVendedores(hojas[HOJAS.usuarios].filas);
         const todos = hojas[HOJAS.pedidos].filas;
 

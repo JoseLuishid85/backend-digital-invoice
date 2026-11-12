@@ -11,6 +11,7 @@ const {
     conBloqueo,
 } = require('../services/googleSheetsService');
 const { registrarLog } = require('../services/historialService');
+const { conInventarioSaint, descontarInventario } = require('../utils/inventarioSaint');
 const {
     aMonto,
     redondear,
@@ -118,9 +119,10 @@ const filasDetalle = (idPedido, productos) => productos.map((p, i) => ({
     ...p,
 }));
 
-// Inventario que se descuenta al emitir la factura: una entrada por producto del catálogo con lo entregado.
-// { inventario: [{ fila, id_producto, producto, stock_anterior, descontado, stock }] } o { status, mensaje } si una
-// línea ya no está en el catálogo o no alcanza el stock (nunca queda negativo).
+// Inventario que alcanza para emitir la factura: una entrada por producto del catálogo con lo entregado.
+// { inventario: [{ fila, id_producto, producto, origen, stock_anterior, descontado, stock }] } o { status, mensaje }
+// si una línea ya no está en el catálogo o no alcanza el stock (nunca queda negativo). El stock viene de Saint para
+// los productos con codigo (origen 'saint'); que se escriba o no lo decide inventarioAEscribir.
 const descuentoInventario = (productos, catalogo) => {
     const porProducto = new Map();
     for (const linea of productos) {
@@ -131,6 +133,7 @@ const descuentoInventario = (productos, catalogo) => {
             fila: producto._fila,
             id_producto: aTexto(producto.id_producto),
             producto: aTexto(producto.nombre),
+            origen: producto.stock_origen ?? 'app',
             stock_anterior: aMonto(producto.stock),
             descontado: 0,
         };
@@ -143,11 +146,17 @@ const descuentoInventario = (productos, catalogo) => {
         return {
             status: 409,
             mensaje: `Stock insuficiente: ${faltan.map((i) => `${i.producto} (se entregan ${i.descontado}, hay ${i.stock_anterior})`).join('; ')}.`
-                + ' Entrega menos o ajusta el stock en Productos.',
+                + (faltan.some((i) => i.origen !== 'app')
+                    ? ' Entrega menos o revisa la existencia en Saint.'
+                    : ' Entrega menos o ajusta el stock en Productos.'),
         };
     }
     return { inventario };
 };
+
+// Lo que se descuenta en la columna Productos.stock: nada mientras DESCONTAR_INVENTARIO no sea "si" (modo de
+// prueba), y nunca los productos enlazados a Saint (Saint descuenta su inventario cuando factura).
+const inventarioAEscribir = (inventario) => (descontarInventario() ? inventario.filter((i) => i.origen === 'app') : []);
 
 // Escribe el stock de cada producto (despues = true: el nuevo; false: el anterior, para deshacer)
 const escribirStock = (inventario, encabezados, despues = true) => actualizarFilas(HOJAS.productos, inventario.map((i) => ({
@@ -250,8 +259,8 @@ const listarPedidosAdmin = async (req, res) => {
     }
 
     try {
-        const hojas = await leerHojas(
-            HOJAS.usuarios, HOJAS.clientes, HOJAS.pedidos, HOJAS.pedidosDetalle, HOJAS.productos, HOJAS.deudas);
+        const hojas = await conInventarioSaint(await leerHojas(
+            HOJAS.usuarios, HOJAS.clientes, HOJAS.pedidos, HOJAS.pedidosDetalle, HOJAS.productos, HOJAS.deudas));
         const vendedores = listaVendedores(hojas[HOJAS.usuarios].filas);
         const clientes = hojas[HOJAS.clientes].filas;
         // Facturas con saldo de cada cliente: al emitir la factura de un pedido pendiente el administrador ve si
@@ -464,10 +473,10 @@ const entregarPedido = async (req, res) => {
 
     try {
         const resultado = await conBloqueo(async () => {
-            const hojas = await leerHojas(
+            const hojas = await conInventarioSaint(await leerHojas(
                 HOJAS.clientes, HOJAS.pedidos, HOJAS.pedidosDetalle, HOJAS.ventas, HOJAS.ventasDetalle, HOJAS.deudas,
                 HOJAS.productos,
-            );
+            ));
             exigirHojas(hojas, [HOJAS.pedidos, HOJAS.ventas, HOJAS.ventasDetalle, HOJAS.deudas]);
             exigirColumnas(HOJAS.productos, hojas[HOJAS.productos].encabezados, ['id_producto', 'stock']);
             const { pedido, ...problema } = pedidoPendiente(hojas[HOJAS.pedidos].filas, req.params.id, null, 'facturar');
@@ -508,6 +517,7 @@ const entregarPedido = async (req, res) => {
             }
             const { inventario, ...sinStock } = descuentoInventario(productos, hojas[HOJAS.productos].filas);
             if (!inventario) return sinStock;
+            const aEscribir = inventarioAEscribir(inventario);
 
             const idVenta = siguienteId(hojas[HOJAS.ventas].filas, 'id_venta', 'VEN');
             const numeroFactura = siguienteNumeroFactura(hojas[HOJAS.ventas].filas);
@@ -556,7 +566,7 @@ const entregarPedido = async (req, res) => {
                 }], hojas[HOJAS.ventas].encabezados);
                 escritas.push([HOJAS.ventas, [venta]]);
 
-                await escribirStock(inventario, hojas[HOJAS.productos].encabezados);
+                await escribirStock(aEscribir, hojas[HOJAS.productos].encabezados);
                 stockEscrito = true;
 
                 // El pedido se marca al final: si dice entregado, su venta y su deuda existen
@@ -567,12 +577,15 @@ const entregarPedido = async (req, res) => {
                     pedido: formatearPedido({ ...pedido, ...cambios }, clientes, hojas[HOJAS.pedidosDetalle].filas),
                     venta: formatearVenta(venta, [cliente], detalles),
                     deuda: formatearDeuda(deuda, [cliente]),
-                    inventario: inventario.map(({ fila, ...i }) => i),
+                    inventario: inventario.map(({ fila, ...i }) => ({
+                        ...i,
+                        descontado_en_app: aEscribir.some((x) => x.id_producto === i.id_producto),
+                    })),
                 };
             } catch (error) {
                 await deshacer(escritas);
                 if (stockEscrito) {
-                    await escribirStock(inventario, hojas[HOJAS.productos].encabezados, false)
+                    await escribirStock(aEscribir, hojas[HOJAS.productos].encabezados, false)
                         .catch((e) => console.error('No se pudo devolver el stock:', e.message));
                 }
                 throw error;
@@ -588,11 +601,16 @@ const entregarPedido = async (req, res) => {
             id_deuda: deuda.id_deuda,
             monto_total: venta.monto_total,
             fecha_entrega: fechaEntrega,
-            inventario: inventario.map((i) => ({ id_producto: i.id_producto, descontado: i.descontado, stock: i.stock })),
+            inventario: inventario.map((i) => ({
+                id_producto: i.id_producto, origen: i.origen, descontado: i.descontado, stock: i.stock,
+                descontado_en_app: i.descontado_en_app,
+            })),
         });
         return res.status(201).json({
             ok: true,
-            mensaje: `Factura ${venta.numero_factura} emitida. Se descontó del inventario.`,
+            mensaje: `Factura ${venta.numero_factura} emitida. ${inventario.some((i) => i.descontado_en_app)
+                ? 'Se descontó del inventario.'
+                : 'No se descontó inventario (el real es el de Saint).'}`,
             pedido,
             venta,
             deuda,
