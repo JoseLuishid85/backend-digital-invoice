@@ -64,8 +64,9 @@ const listarVisitas = async (req, res) => {
             periodo,
             cerrado: mesCerrado(hojas[HOJAS.comisiones].filas, idVendedor, periodo),
             resultados: RESULTADOS_VISITA,
-            // Meta del mes: { meta, bono } (clientes distintos que hay que visitar para ganar la bonificación)
-            meta: leerReglas(hojas[HOJAS.reglasBonificacion].filas, hojas[HOJAS.plazos].filas).visitas,
+            // Meta del mes: { meta } (clientes distintos que hay que visitar). Sin el monto del bono: el vendedor
+            // no ve sus bonificaciones
+            meta: { meta: leerReglas(hojas[HOJAS.reglasBonificacion].filas, hojas[HOJAS.plazos].filas).visitas.meta },
             resumen: resumenDe(visitas),
             visitas,
         });

@@ -1,6 +1,8 @@
 const { HOJAS, leerHojas } = require('../services/googleSheetsService');
 const { mismoId, aTexto, clientesDelVendedor, listaVendedores, nombreVendedor, responderError } = require('../utils/cartera');
-const { leerPeriodo, armarConsulta, pagosDeClientes } = require('../utils/consultas');
+const {
+    leerPeriodo, armarConsulta, leerFiltrosPedidos, armarConsultaPedidos, pagosDeClientes,
+} = require('../utils/consultas');
 
 const HOJAS_CONSULTA = [HOJAS.clientes, HOJAS.ventas, HOJAS.ventasDetalle, HOJAS.deudas, HOJAS.pagos];
 
@@ -54,4 +56,55 @@ const consultarVentasAdmin = async (req, res) => {
     }
 };
 
-module.exports = { consultarVentas, consultarVentasAdmin };
+const HOJAS_PEDIDOS = [HOJAS.clientes, HOJAS.pedidos, HOJAS.pedidosDetalle, HOJAS.productos];
+
+// GET /bill/api/vendedores/consultas/pedidos?estado=pendiente|entregado|anulado&desde=&hasta=
+// Productos en los pedidos del vendedor logueado (por defecto los pendientes, de cualquier fecha)
+const consultarPedidos = async (req, res) => {
+    const filtros = leerFiltrosPedidos(req.query);
+    if (filtros.error) return res.status(400).json({ ok: false, mensaje: filtros.error });
+
+    try {
+        const hojas = await leerHojas(...HOJAS_PEDIDOS);
+        const idVendedor = req.vendedor.id_vendedor;
+        const todos = hojas[HOJAS.pedidos].filas;
+
+        const consulta = armarConsultaPedidos({
+            pedidos: todos.filter((p) => mismoId(p.id_vendedor, idVendedor)),
+            todosLosPedidos: todos,
+            detalles: hojas[HOJAS.pedidosDetalle].filas,
+            clientes: clientesDelVendedor(hojas[HOJAS.clientes].filas, idVendedor),
+            catalogo: hojas[HOJAS.productos].filas,
+        }, filtros);
+        return res.json({ ok: true, ...consulta });
+    } catch (error) {
+        return responderError(res, error, 'Error al consultar los pedidos');
+    }
+};
+
+// GET /bill/api/vendedores/admin/consultas/pedidos?estado=&desde=&hasta=&id_vendedor=
+// Lo mismo para todos los vendedores (o uno), con el vendedor de cada pedido y la lista de vendedores
+const consultarPedidosAdmin = async (req, res) => {
+    const filtros = leerFiltrosPedidos(req.query);
+    if (filtros.error) return res.status(400).json({ ok: false, mensaje: filtros.error });
+    const idVendedor = aTexto(req.query.id_vendedor);
+
+    try {
+        const hojas = await leerHojas(HOJAS.usuarios, ...HOJAS_PEDIDOS);
+        const vendedores = listaVendedores(hojas[HOJAS.usuarios].filas);
+        const todos = hojas[HOJAS.pedidos].filas;
+
+        const consulta = armarConsultaPedidos({
+            pedidos: todos.filter((p) => !idVendedor || mismoId(p.id_vendedor, idVendedor)),
+            todosLosPedidos: todos,
+            detalles: hojas[HOJAS.pedidosDetalle].filas,
+            clientes: hojas[HOJAS.clientes].filas,
+            catalogo: hojas[HOJAS.productos].filas,
+        }, filtros, (id) => nombreVendedor(vendedores, id));
+        return res.json({ ok: true, ...consulta, vendedores });
+    } catch (error) {
+        return responderError(res, error, 'Error al consultar los pedidos');
+    }
+};
+
+module.exports = { consultarVentas, consultarVentasAdmin, consultarPedidos, consultarPedidosAdmin };

@@ -39,11 +39,23 @@ const hayBancos = (lista) => Array.isArray(lista) && lista.some((l) => buscarMet
 const bancoActivo = (bancos, idBanco) => bancos.find((b) =>
     mismoId(b.id_banco, idBanco) && ['', 'activo'].includes(aTexto(b.estado).toLowerCase()));
 
-// Texto que se guarda en la columna banco de Pagos: "0102 - Banco de Venezuela"
+// Texto que se guarda en las columnas banco y banco_receptor de Pagos: "0102 - Banco de Venezuela"
 const nombreBanco = (banco) => [aTexto(banco.cod_banco), aTexto(banco.nombre)].filter(Boolean).join(' - ');
 
-// Valida las formas de pago: [{ metodo, monto, referencia?, banco? }] (monto en la moneda del método;
-// banco = id_banco, obligatorio en pago móvil y transferencia). Devuelve { lineas, totalUsd } (total sin redondear) o { error }.
+const activo = (banco) => ['', 'activo'].includes(aTexto(banco.estado).toLowerCase());
+const marcadoReceptor = (banco) => ['si', 'sí', 'x', '1', 'true'].includes(aTexto(banco.receptor).toLowerCase());
+
+// Bancos que pueden recibir el pago (donde la empresa tiene cuenta): los activos con receptor = si en la hoja
+// Bancos; si no hay ninguno marcado (o falta la columna), todos los activos
+const bancosReceptores = (bancos) => {
+    const activos = bancos.filter((b) => aTexto(b.id_banco) && activo(b));
+    const marcados = activos.filter(marcadoReceptor);
+    return marcados.length ? marcados : activos;
+};
+
+// Valida las formas de pago: [{ metodo, monto, referencia?, banco?, banco_receptor? }] (monto en la moneda del
+// método; banco = id_banco desde el que paga el cliente y banco_receptor = id_banco al que llegó el pago, ambos
+// obligatorios en pago móvil y transferencia). Devuelve { lineas, totalUsd } (total sin redondear) o { error }.
 const leerLineasPago = (lista, tasa, bancos = []) => {
     if (!Array.isArray(lista) || !lista.length) return { error: 'Agrega al menos una forma de pago.' };
     if (lista.length > MAXIMO_LINEAS) return { error: `Se admiten como máximo ${MAXIMO_LINEAS} formas de pago.` };
@@ -57,10 +69,14 @@ const leerLineasPago = (lista, tasa, bancos = []) => {
         const enBolivares = metodo.moneda === 'VES';
         if (enBolivares && !(tasa > 0)) return { error: 'Falta la tasa del dólar para los pagos en bolívares.' };
         let banco = '';
+        let bancoReceptor = '';
         if (metodo.conBanco) {
             const elegido = bancoActivo(bancos, linea?.banco);
             if (!elegido) return { error: `Elige el banco de ${metodo.etiqueta} (línea ${i + 1}).` };
             banco = nombreBanco(elegido);
+            const receptor = bancosReceptores(bancos).find((b) => mismoId(b.id_banco, linea?.banco_receptor));
+            if (!receptor) return { error: `Elige el banco receptor de ${metodo.etiqueta} (línea ${i + 1}).` };
+            bancoReceptor = nombreBanco(receptor);
         }
 
         lineas.push({
@@ -68,6 +84,7 @@ const leerLineasPago = (lista, tasa, bancos = []) => {
             metodo,
             referencia: aTexto(linea?.referencia),
             banco,
+            banco_receptor: bancoReceptor,
             monto_bs: enBolivares ? redondear(monto) : null,
             usd: enBolivares ? monto / tasa : monto,
         });
@@ -95,6 +112,7 @@ const filasPago = (lineas, { ids, comprobantes, tasa, ...comunes }) => lineas.ma
     tasa_bcv: l.monto_bs !== null ? tasa : '',
     metodo_pago: l.metodo.etiqueta,
     banco: l.banco ?? '',
+    banco_receptor: l.banco_receptor ?? '',
     referencia: l.referencia,
     comprobante_url: comprobantes[l.linea] ?? '',
     estado_verificacion: 'pendiente',
@@ -136,6 +154,8 @@ module.exports = {
     TOLERANCIA_USD,
     leerDatos,
     hayBancos,
+    bancosReceptores,
+    nombreBanco,
     leerLineasPago,
     repartirUsd,
     filasPago,

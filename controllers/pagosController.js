@@ -54,10 +54,11 @@ const listarPagos = async (req, res) => {
 const COLUMNAS_ABONO = ['banco', 'id_plazo', 'monto_factura', 'descuento'];
 
 // POST /bill/api/vendedores/pagos
-// multipart: datos = JSON { id_deuda, fecha_pago?, tasa_bcv?, id_plazo?, pagos: [{ metodo, monto, referencia?, banco? }] }
+// multipart: datos = JSON { id_deuda, fecha_pago?, tasa_bcv?, id_plazo?, pagos: [{ metodo, monto, referencia?, banco?, banco_receptor? }] }
 //            y comprobante_<n> (foto o PDF opcional de la forma de pago n). También acepta el JSON como body.
 // Un abono puede combinar varias formas de pago; cada una es una fila de Pagos. Los montos en bolívares
-// se convierten con tasa_bcv (o la del día del pago). banco (id_banco) es obligatorio en pago móvil y transferencia.
+// se convierten con tasa_bcv (o la del día del pago). banco (id_banco del cliente) y banco_receptor
+// (id_banco al que llegó) son obligatorios en pago móvil y transferencia.
 // Las deudas de pedidos entregados tienen descuento por pagar antes (hojas Plazos y Precios), pero solo en el pago
 // que cancela la factura: id_plazo (por defecto el que corresponde a los días desde la entrega; se puede elegir uno
 // posterior, nunca uno anterior cuyo descuento ya venció) y la moneda fijan el total de la factura en ese plazo, y
@@ -101,7 +102,9 @@ const registrarPago = async (req, res) => {
                 HOJAS.clientes, HOJAS.deudas, HOJAS.pagos, HOJAS.ventas, HOJAS.ventasDetalle, HOJAS.productos,
                 ...HOJAS_PRECIOS,
             );
-            exigirColumnas(HOJAS.pagos, hojas[HOJAS.pagos].encabezados, COLUMNAS_ABONO);
+            // banco_receptor solo se exige si alguna forma de pago lleva banco (pago móvil o transferencia)
+            exigirColumnas(HOJAS.pagos, hojas[HOJAS.pagos].encabezados,
+                lineas.some((l) => l.metodo.conBanco) ? [...COLUMNAS_ABONO, 'banco_receptor'] : COLUMNAS_ABONO);
             const clientes = clientesDelVendedor(hojas[HOJAS.clientes].filas, req.vendedor.id_vendedor);
             const deudas = hojas[HOJAS.deudas];
 

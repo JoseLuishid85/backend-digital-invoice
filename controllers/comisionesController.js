@@ -71,7 +71,7 @@ const totalesDe = (liquidaciones) => ({
     total: sumar(liquidaciones, 'total_a_pagar'),
 });
 
-// GET /bill/api/vendedores/comisiones?periodo=YYYY-MM
+// Sin ruta: el vendedor no ve sus bonificaciones (ver routes/comisionesRouter.js). Antes: GET /comisiones?periodo=YYYY-MM
 // Bonificación del vendedor logueado en el mes (avance de cada producto hacia su cuota) y sus meses cerrados
 const obtenerMiComision = async (req, res) => {
     const periodo = periodoConsulta(req.query.periodo);

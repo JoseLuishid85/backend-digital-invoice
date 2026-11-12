@@ -20,7 +20,7 @@ const {
     obtenerReglas,
     guardarReglas,
 } = require('../controllers/comisionesController');
-const { consultarVentasAdmin } = require('../controllers/consultasController');
+const { consultarVentasAdmin, consultarPedidosAdmin } = require('../controllers/consultasController');
 const { listarVisitasAdmin } = require('../controllers/visitasController');
 const { listarClientesAdmin, obtenerHistorialAdmin } = require('../controllers/clientesController');
 const { listarPedidosAdmin, entregarPedido } = require('../controllers/pedidosController');
@@ -99,6 +99,9 @@ router.put('/cuotas', soloAdministrador, guardarCuotas);
 
 // GET /bill/api/vendedores/admin/consultas/ventas?desde=&hasta=&agrupar=dia|semana|mes&id_vendedor=
 router.get('/consultas/ventas', soloAdministrador, consultarVentasAdmin);
+
+// GET /bill/api/vendedores/admin/consultas/pedidos?estado=pendiente|entregado|anulado&desde=&hasta=&id_vendedor=
+router.get('/consultas/pedidos', soloAdministrador, consultarPedidosAdmin);
 
 // Niveles y plazos del motor de precios (hojas Niveles y Plazos). Cada uno trae usos: { precios, historial }
 // GET    /bill/api/vendedores/admin/niveles      POST /admin/niveles  JSON: { id_nivel, nombre, unidades_desde, unidades_hasta?, estado? }

@@ -1,4 +1,7 @@
-const { aMonto, redondear, sumar, mismoId, aTexto, formatearVenta, cobroDeVenta, masRecientePrimero } = require('./cartera');
+const {
+    aMonto, redondear, sumar, mismoId, aTexto, formatearVenta, cobroDeVenta, masRecientePrimero,
+    ESTADOS_PEDIDO, formatearPedido, productoDeLinea,
+} = require('./cartera');
 const { aFecha, fechaHoy, sumarDias, diasEntre } = require('./valores');
 
 // Consultas de ventas por período (menú Consultas). Las usan el vendedor (sus ventas) y el administrador
@@ -170,7 +173,109 @@ const armarConsulta = ({ ventas, pagos, detalles, clientes, deudas }, { desde, h
     return resultado;
 };
 
+// Filtros de la consulta de productos en pedidos: estado (por defecto pendiente) y, opcional, desde/hasta por
+// fecha_pedido (sin fechas: todos los pedidos de ese estado). { error } si algo no vale.
+const leerFiltrosPedidos = (query) => {
+    const estado = aTexto(query.estado).toLowerCase() || 'pendiente';
+    if (!ESTADOS_PEDIDO.includes(estado)) return { error: `El estado debe ser ${ESTADOS_PEDIDO.join(', ')}.` };
+    if (!query.desde && !query.hasta) return { estado, desde: null, hasta: null };
+
+    const desde = aFecha(query.desde);
+    const hasta = aFecha(query.hasta);
+    if (!desde || !hasta) return { error: 'Indica las dos fechas (desde y hasta) con el formato YYYY-MM-DD.' };
+    if (desde > hasta) return { error: 'La fecha inicial no puede ser posterior a la final.' };
+    if (diasEntre(desde, hasta) + 1 > MAX_DIAS_RANGO) return { error: 'El rango no puede pasar de 5 años.' };
+    return { estado, desde, hasta };
+};
+
+// Productos en pedidos, agrupados por producto (por ID del catálogo o, sin ID, por el nombre).
+// pedidos: filas de Pedidos ya filtradas por vendedor; todosLosPedidos: los de todos los vendedores (para lo
+// comprometido); detalles: Pedidos_Detalle; catalogo: Productos (stock). nombreDeVendedor (opcional, administrador).
+// En los pendientes cada producto trae stock, comprometido (unidades en pedidos pendientes de todos los vendedores,
+// lo que se descontará al facturar) y falta (lo comprometido que el stock no cubre).
+const armarConsultaPedidos = ({ pedidos, todosLosPedidos, detalles, clientes, catalogo }, { estado, desde, hasta }, nombreDeVendedor) => {
+    const delFiltro = pedidos
+        .map((p) => formatearPedido(p, clientes, detalles))
+        .filter((p) => p.estado === estado && (!desde || enRango(aTexto(p.fecha_pedido), desde, hasta)))
+        .sort(masRecientePrimero('fecha_pedido', 'id_pedido'));
+
+    const claveDeLinea = (l) => aTexto(l.id_producto).toUpperCase() || aTexto(l.producto).toLowerCase();
+
+    // Unidades comprometidas por producto en todos los pedidos pendientes (de cualquier vendedor y fecha)
+    const comprometido = new Map();
+    if (estado === 'pendiente') {
+        const pendientes = new Set(todosLosPedidos
+            .filter((p) => (aTexto(p.estado).toLowerCase() || 'pendiente') === 'pendiente')
+            .map((p) => aTexto(p.id_pedido).toUpperCase()));
+        detalles
+            .filter((d) => pendientes.has(aTexto(d.id_pedido).toUpperCase()))
+            .forEach((d) => comprometido.set(claveDeLinea(d), (comprometido.get(claveDeLinea(d)) ?? 0) + aMonto(d.cantidad)));
+    }
+
+    const porProducto = new Map();
+    delFiltro.forEach((pedido) => pedido.productos.forEach((l) => {
+        const clave = claveDeLinea(l);
+        const actual = porProducto.get(clave) ?? {
+            id_producto: aTexto(l.id_producto),
+            producto: aTexto(l.producto),
+            cantidad: 0,
+            monto: 0,
+            pedidos: new Set(),
+            clientes: new Set(),
+            detalle: [],
+        };
+        actual.cantidad += l.cantidad;
+        actual.monto += l.subtotal;
+        actual.pedidos.add(pedido.id_pedido);
+        actual.clientes.add(aTexto(pedido.id_cliente).toUpperCase());
+        actual.detalle.push({
+            id_pedido: pedido.id_pedido,
+            fecha_pedido: pedido.fecha_pedido,
+            id_cliente: pedido.id_cliente,
+            cliente_nombre: pedido.cliente_nombre,
+            ...(nombreDeVendedor && { vendedor_nombre: nombreDeVendedor(pedido.id_vendedor) }),
+            cantidad: l.cantidad,
+            precio_unitario: l.precio_unitario,
+            subtotal: l.subtotal,
+        });
+        porProducto.set(clave, actual);
+    }));
+
+    const productos = [...porProducto.entries()].map(([clave, p]) => {
+        const fila = {
+            ...p,
+            cantidad: redondear(p.cantidad),
+            monto: redondear(p.monto),
+            pedidos: p.pedidos.size,
+            clientes: p.clientes.size,
+        };
+        if (estado === 'pendiente') {
+            const producto = productoDeLinea(catalogo, p);
+            fila.stock = producto ? aMonto(producto.stock) : null; // null: ya no está en el catálogo
+            fila.comprometido = redondear(comprometido.get(clave) ?? p.cantidad);
+            fila.falta = fila.stock === null ? fila.comprometido : redondear(Math.max(0, fila.comprometido - fila.stock));
+        }
+        return fila;
+    }).sort((a, b) => b.cantidad - a.cantidad || b.monto - a.monto);
+
+    const clientesUnicos = new Set(delFiltro.map((p) => aTexto(p.id_cliente).toUpperCase()));
+    return {
+        estado,
+        desde,
+        hasta,
+        resumen: {
+            pedidos: delFiltro.length,
+            monto: sumar(delFiltro, 'monto_total'),
+            unidades: redondear(productos.reduce((suma, p) => suma + p.cantidad, 0)),
+            productos: productos.length,
+            clientes: clientesUnicos.size,
+            ...(estado === 'pendiente' && { sin_stock: productos.filter((p) => p.falta > 0).length }),
+        },
+        productos,
+    };
+};
+
 // Pagos de un grupo de clientes (la hoja Pagos no guarda el vendedor: sale del cliente)
 const pagosDeClientes = (pagos, clientes) => pagos.filter((p) => clientes.some((c) => mismoId(c.id_cliente, p.id_cliente)));
 
-module.exports = { AGRUPACIONES, leerPeriodo, armarConsulta, pagosDeClientes };
+module.exports = { AGRUPACIONES, leerPeriodo, armarConsulta, leerFiltrosPedidos, armarConsultaPedidos, pagosDeClientes };

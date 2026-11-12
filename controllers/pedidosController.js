@@ -250,9 +250,29 @@ const listarPedidosAdmin = async (req, res) => {
     }
 
     try {
-        const hojas = await leerHojas(HOJAS.usuarios, HOJAS.clientes, HOJAS.pedidos, HOJAS.pedidosDetalle, HOJAS.productos);
+        const hojas = await leerHojas(
+            HOJAS.usuarios, HOJAS.clientes, HOJAS.pedidos, HOJAS.pedidosDetalle, HOJAS.productos, HOJAS.deudas);
         const vendedores = listaVendedores(hojas[HOJAS.usuarios].filas);
         const clientes = hojas[HOJAS.clientes].filas;
+        // Facturas con saldo de cada cliente: al emitir la factura de un pedido pendiente el administrador ve si
+        // el cliente ya debe (null si no debe nada)
+        const deudasAbiertas = (hojas[HOJAS.deudas]?.filas ?? [])
+            .map((d) => formatearDeuda(d, clientes))
+            .filter((d) => d.monto_pendiente > 0);
+        const deudaDeCliente = (idCliente) => {
+            const deudas = deudasAbiertas
+                .filter((d) => mismoId(d.id_cliente, idCliente))
+                .sort((a, b) => String(a.fecha_vencimiento ?? '').localeCompare(String(b.fecha_vencimiento ?? '')));
+            if (!deudas.length) return null;
+            const vencidas = deudas.filter((d) => d.vencida);
+            return {
+                total: redondear(deudas.reduce((suma, d) => suma + d.monto_pendiente, 0)),
+                vencido: redondear(vencidas.reduce((suma, d) => suma + d.monto_pendiente, 0)),
+                facturas: deudas.length,
+                vencidas: vencidas.length,
+                deudas,
+            };
+        };
         const detalles = hojas[HOJAS.pedidosDetalle].filas;
         const catalogo = hojas[HOJAS.productos].filas;
         // Stock actual de cada línea (null si el producto ya no está en el catálogo), para la emisión de la factura
@@ -268,7 +288,8 @@ const listarPedidosAdmin = async (req, res) => {
             .filter((p) => !idVendedor || mismoId(p.id_vendedor, idVendedor))
             .sort(masRecientePrimero('fecha_pedido', 'id_pedido'))
             .map((p) => ({ ...conStock(formatearPedido(p, clientes, detalles)), vendedor_nombre: nombreVendedor(vendedores, p.id_vendedor) }))
-            .filter((p) => !estado || p.estado === estado);
+            .filter((p) => !estado || p.estado === estado)
+            .map((p) => (p.estado === 'pendiente' ? { ...p, deuda_cliente: deudaDeCliente(p.id_cliente) } : p));
 
         const total = redondear(pedidos.reduce((suma, p) => suma + p.monto_total, 0));
         return res.json({ ok: true, total, pedidos, vendedores });
