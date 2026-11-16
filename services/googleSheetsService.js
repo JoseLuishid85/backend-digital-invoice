@@ -21,7 +21,7 @@ const HOJAS = {
     comisionesDetalle: 'Comisiones_Detalle', // (sistema anterior) de qué pago y producto sale cada comisión
     bonificacionesDetalle: 'Bonificaciones_Detalle', // cuota, unidades y bonificación de cada producto por mes cerrado
     reglasBonificacion: 'Reglas_Bonificacion', // clave/valor: plazo activo, metas y montos de visitas y clientes nuevos
-    visitas: 'Visitas', // visitas del vendedor a sus clientes (meta de clientes visitados)
+    visitas: 'Visitas', // visitas del vendedor a sus clientes (solo registro, no bonifica)
     logs: 'Historial_Logs',
 };
 

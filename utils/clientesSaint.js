@@ -7,8 +7,8 @@ const { aTexto, mismoId } = require('./cartera');
 // pestaña Clientes de la app. Saint manda en sus datos; la app guarda los suyos (id_cliente CLI-001, deudas, etc.).
 // - Enlace: Clientes.cod_cliente = CodClie. Los clientes de la app sin cod_cliente no se tocan.
 // - Vendedor: CodVend → Usuarios.cod_vendedor. Los clientes de un CodVend sin usuario en la app no se copian.
-// - Nuevos: se agregan con fecha_registro = FechaE de Saint (su fecha de alta real, que cuenta para el bono de
-//   clientes nuevos) y limite_credito vacío (el de Saint está en Bs).
+// - Nuevos: se agregan con fecha_registro = FechaE de Saint (su fecha de alta real), limite_credito vacío (el de
+//   Saint está en Bs) y cliente_existente vacío (cuentan como nuevos con su primer pedido o venta en la app).
 // - Existentes: se actualizan solo los campos de Saint que cambiaron (nombre, contacto, teléfono, dirección, RIF,
 //   email, estado y vendedor). Nunca borra filas.
 

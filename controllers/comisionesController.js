@@ -26,7 +26,7 @@ const COLUMNAS_META = ['id_meta', 'id_vendedor', 'periodo', 'sueldo_base', 'obse
 // Hojas que hacen falta para calcular o mostrar una liquidación
 const HOJAS_CALCULO = [
     HOJAS.usuarios, HOJAS.ventas, HOJAS.ventasDetalle, HOJAS.productos, HOJAS.metas, HOJAS.comisiones,
-    HOJAS.bonificacionesDetalle, HOJAS.clientes, HOJAS.visitas, HOJAS.reglasBonificacion, HOJAS.plazos,
+    HOJAS.bonificacionesDetalle, HOJAS.clientes, HOJAS.pedidos, HOJAS.reglasBonificacion, HOJAS.plazos,
 ];
 
 const filasCalculo = (hojas) => ({
@@ -35,7 +35,7 @@ const filasCalculo = (hojas) => ({
     catalogo: hojas[HOJAS.productos].filas,
     metas: hojas[HOJAS.metas].filas,
     clientes: hojas[HOJAS.clientes].filas,
-    visitas: hojas[HOJAS.visitas].filas,
+    pedidos: hojas[HOJAS.pedidos].filas,
 });
 
 const reglasDe = (hojas) => leerReglas(hojas[HOJAS.reglasBonificacion].filas, hojas[HOJAS.plazos].filas);
@@ -66,7 +66,7 @@ const totalesDe = (liquidaciones) => ({
     bonificaciones: sumar(liquidaciones, 'bonificacion'),
     cuotas: sumar(liquidaciones, 'bono_cuotas'),
     plazo: montoDe(liquidaciones, (l) => l.bono_plazo.monto),
-    visitas: montoDe(liquidaciones, (l) => l.bono_visitas.monto),
+    clientes_activos: montoDe(liquidaciones, (l) => l.bono_clientes_activos.monto),
     clientes_nuevos: montoDe(liquidaciones, (l) => l.bono_clientes_nuevos.monto),
     total: sumar(liquidaciones, 'total_a_pagar'),
 });
@@ -128,7 +128,7 @@ const listarComisionesAdmin = async (req, res) => {
 // POST /bill/api/vendedores/admin/comisiones/:periodo/cerrar  (JSON opcional: { id_vendedor })
 // Cierra el mes: guarda la liquidación de cada vendedor que aún no la tiene (o solo la de id_vendedor) con sus cuatro
 // bonificaciones (hoja Comisiones) y la de cada producto (Bonificaciones_Detalle). Todos los vendedores que se
-// cierran deben tener sueldo base (hoja Metas). Las ventas, visitas o clientes que se registren después con fecha de
+// cierran deben tener sueldo base (hoja Metas). Las ventas o pedidos que se registren después con fecha de
 // ese mes ya no cuentan (habría que reabrirlo).
 const cerrarComisiones = async (req, res) => {
     const periodo = aPeriodo(req.params.periodo);
@@ -468,7 +468,7 @@ const respuestaReglas = (hojas) => ({ reglas: reglasDe(hojas) });
 
 // GET /bill/api/vendedores/admin/bonificaciones/reglas
 // { reglas: { piso, tope, plazos: [{ id_plazo, nombre, dias_desde, dias_hasta, activo, porcentaje }], plazo,
-//   visitas: { meta, bono }, clientes_nuevos: { meta, bono } } }
+//   clientes_activos: { meta, bono }, clientes_nuevos: { meta, bono } } }
 const obtenerReglas = async (req, res) => {
     try {
         return res.json({ ok: true, ...respuestaReglas(await leerHojas(HOJAS.reglasBonificacion, HOJAS.plazos)) });
@@ -478,13 +478,13 @@ const obtenerReglas = async (req, res) => {
 };
 
 // PUT /bill/api/vendedores/admin/bonificaciones/reglas
-// body JSON: { id_plazo ('' = sin bonificación por plazo), porcentajes: { [id_plazo]: % }, meta_visitas, bono_visitas,
-//   meta_clientes_nuevos, bono_clientes_nuevos } (todo opcional: solo cambia lo que viene)
+// body JSON: { id_plazo ('' = sin bonificación por plazo), porcentajes: { [id_plazo]: % }, meta_clientes_activos,
+//   bono_clientes_activos, meta_clientes_nuevos, bono_clientes_nuevos } (todo opcional: solo cambia lo que viene)
 // Los meses ya cerrados no cambian: guardaron las reglas que tenían.
 const guardarReglas = async (req, res) => {
     const body = req.body ?? {};
     const claves = {};
-    for (const clave of ['meta_visitas', 'bono_visitas', 'meta_clientes_nuevos', 'bono_clientes_nuevos']) {
+    for (const clave of ['meta_clientes_activos', 'bono_clientes_activos', 'meta_clientes_nuevos', 'bono_clientes_nuevos']) {
         if (body[clave] === undefined) continue;
         const valor = leerMonto(body[clave]);
         if (valor === null) return res.status(400).json({ ok: false, mensaje: `${clave} debe ser un número mayor o igual a 0.` });

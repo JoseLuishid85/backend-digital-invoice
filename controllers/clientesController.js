@@ -73,6 +73,8 @@ const crearCliente = async (req, res) => {
                 limite_credito: limiteCredito,
                 estado: 'activo',
                 fecha_registro: fechaHoy(),
+                // Puede contar como cliente nuevo (bonificación 4) con su primer pedido o venta
+                cliente_existente: 'no',
             }, encabezados);
         });
 

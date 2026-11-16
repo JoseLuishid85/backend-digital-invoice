@@ -5,11 +5,11 @@ const { registrarLog } = require('../services/historialService');
 const {
     aTexto, mismoId, clientesDelVendedor, listaVendedores, nombreVendedor, fechaHoraActual, responderError,
 } = require('../utils/cartera');
-const { COLUMNAS_VISITAS, RESULTADOS_VISITA, aPeriodo, periodoActual, leerReglas } = require('../utils/comisiones');
+const { COLUMNAS_VISITAS, RESULTADOS_VISITA, aPeriodo, periodoActual } = require('../utils/comisiones');
 const { aFecha, fechaHoy } = require('../utils/valores');
 
-// Visitas del vendedor a sus clientes (hoja Visitas). Cuentan para la bonificación por clientes visitados: los
-// clientes distintos visitados en el mes (utils/comisiones.js). Un mes con la liquidación cerrada no admite cambios.
+// Visitas del vendedor a sus clientes (hoja Visitas). Son solo un registro: ya no cuentan para las bonificaciones
+// (la 3 ahora es por clientes activos, los que tuvieron ventas; ver utils/comisiones.js).
 
 const nombreCliente = (cliente, idCliente) => aTexto(cliente?.nombre_comercial) || aTexto(cliente?.contacto_nombre) || aTexto(idCliente);
 
@@ -41,9 +41,6 @@ const resumenDe = (visitas) => ({
     clientes_visitados: new Set(visitas.map((v) => v.id_cliente.toUpperCase())).size,
 });
 
-const mesCerrado = (comisiones, idVendedor, periodo) => comisiones
-    .some((c) => mismoId(c.id_vendedor, idVendedor) && aPeriodo(c.periodo) === periodo);
-
 // GET /bill/api/vendedores/visitas?periodo=YYYY-MM&id_cliente=
 const listarVisitas = async (req, res) => {
     const periodo = periodoConsulta(req.query.periodo);
@@ -51,7 +48,7 @@ const listarVisitas = async (req, res) => {
     const idCliente = aTexto(req.query.id_cliente);
 
     try {
-        const hojas = await leerHojas(HOJAS.visitas, HOJAS.clientes, HOJAS.comisiones, HOJAS.reglasBonificacion, HOJAS.plazos);
+        const hojas = await leerHojas(HOJAS.visitas, HOJAS.clientes);
         const idVendedor = req.vendedor.id_vendedor;
         const visitas = hojas[HOJAS.visitas].filas
             .filter((v) => mismoId(v.id_vendedor, idVendedor) && aPeriodo(v.fecha_visita) === periodo)
@@ -62,11 +59,7 @@ const listarVisitas = async (req, res) => {
         return res.json({
             ok: true,
             periodo,
-            cerrado: mesCerrado(hojas[HOJAS.comisiones].filas, idVendedor, periodo),
             resultados: RESULTADOS_VISITA,
-            // Meta del mes: { meta } (clientes distintos que hay que visitar). Sin el monto del bono: el vendedor
-            // no ve sus bonificaciones
-            meta: { meta: leerReglas(hojas[HOJAS.reglasBonificacion].filas, hojas[HOJAS.plazos].filas).visitas.meta },
             resumen: resumenDe(visitas),
             visitas,
         });
@@ -91,7 +84,7 @@ const registrarVisita = async (req, res) => {
 
     try {
         const resultadoBloque = await conBloqueo(async () => {
-            const hojas = await leerHojas(HOJAS.visitas, HOJAS.clientes, HOJAS.comisiones);
+            const hojas = await leerHojas(HOJAS.visitas, HOJAS.clientes);
             const { encabezados, filas } = hojas[HOJAS.visitas];
             exigirColumnas(HOJAS.visitas, encabezados, COLUMNAS_VISITAS);
 
@@ -99,9 +92,6 @@ const registrarVisita = async (req, res) => {
             const cliente = clientesDelVendedor(hojas[HOJAS.clientes].filas, idVendedor)
                 .find((c) => mismoId(c.id_cliente, idCliente));
             if (!cliente) return { status: 404, mensaje: 'Cliente no encontrado.' };
-            if (mesCerrado(hojas[HOJAS.comisiones].filas, idVendedor, aPeriodo(fecha))) {
-                return { status: 409, mensaje: `El mes ${aPeriodo(fecha)} ya está liquidado: no se pueden agregar visitas.` };
-            }
 
             const visita = {
                 id_visita: siguienteId(filas, 'id_visita', 'VIS'),
@@ -126,18 +116,15 @@ const registrarVisita = async (req, res) => {
     }
 };
 
-// DELETE /bill/api/vendedores/visitas/:id  (solo las propias y de un mes sin liquidar)
+// DELETE /bill/api/vendedores/visitas/:id  (solo las propias)
 const eliminarVisita = async (req, res) => {
     try {
         const resultado = await conBloqueo(async () => {
-            const hojas = await leerHojas(HOJAS.visitas, HOJAS.comisiones);
+            const hojas = await leerHojas(HOJAS.visitas);
             const idVendedor = req.vendedor.id_vendedor;
             const fila = hojas[HOJAS.visitas].filas
                 .find((v) => mismoId(v.id_visita, req.params.id) && mismoId(v.id_vendedor, idVendedor));
             if (!fila) return { status: 404, mensaje: 'Visita no encontrada.' };
-            if (mesCerrado(hojas[HOJAS.comisiones].filas, idVendedor, aPeriodo(fila.fecha_visita))) {
-                return { status: 409, mensaje: 'Ese mes ya está liquidado: la visita no se puede eliminar.' };
-            }
             await eliminarFila(HOJAS.visitas, fila._fila);
             return { id_visita: aTexto(fila.id_visita), id_cliente: aTexto(fila.id_cliente) };
         });

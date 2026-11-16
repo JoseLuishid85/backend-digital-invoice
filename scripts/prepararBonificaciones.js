@@ -4,15 +4,17 @@
 // - Plazos: columna bonificacion_pct, sembrada con CONT 100, CRED1 90, CRED2 80, CRED3 60 donde esté vacía.
 // - Comisiones: columnas de las cuatro bonificaciones (las del sistema anterior quedan como están).
 // - Crea las pestañas Bonificaciones_Detalle, Visitas y Reglas_Bonificacion (esta con sus valores iniciales: plazo
-//   CRED3, 50 visitas → 200 $, 5 clientes nuevos → 150 $).
+//   CRED3, 50 clientes activos → 200 $, 5 clientes nuevos → 150 $). Las claves viejas meta_visitas y bono_visitas
+//   se renombran a meta_clientes_activos y bono_clientes_activos conservando su valor.
+// - Clientes: columna cliente_existente (para marcar los clientes de antes, usa scripts/marcarClientesExistentes.js).
 // Uso: node scripts/prepararBonificaciones.js
 require('dotenv').config({ quiet: true });
 const {
     HOJAS, crearPestana, agregarColumnas, leerHoja, agregarFilas, actualizarFilas,
 } = require('../services/googleSheetsService');
 const {
-    COLUMNAS_CUOTA, COLUMNAS_CIERRE, COLUMNAS_REGLAS, COLUMNAS_VISITAS, COLUMNA_PCT_PLAZO, REGLAS_POR_DEFECTO,
-    DESCRIPCION_REGLAS, PORCENTAJE_PLAZO_INICIAL,
+    COLUMNAS_CUOTA, COLUMNAS_CIERRE, COLUMNAS_REGLAS, COLUMNAS_VISITAS, COLUMNA_PCT_PLAZO, COLUMNA_CLIENTE_EXISTENTE,
+    REGLAS_POR_DEFECTO, REGLAS_ANTERIORES, DESCRIPCION_REGLAS, PORCENTAJE_PLAZO_INICIAL,
 } = require('../utils/comisiones');
 const { aTexto } = require('../utils/cartera');
 
@@ -30,12 +32,22 @@ const COLUMNAS_NUEVAS = {
     [HOJAS.plazos]: [COLUMNA_PCT_PLAZO],
     [HOJAS.comisiones]: COLUMNAS_CIERRE,
     [HOJAS.metas]: ['id_meta', 'id_vendedor', 'periodo', 'sueldo_base', 'observaciones'],
+    [HOJAS.clientes]: [COLUMNA_CLIENTE_EXISTENTE],
 };
 
-// Agrega a Reglas_Bonificacion las claves que falten con su valor inicial
+// Renombra las claves viejas de Reglas_Bonificacion (conservan su valor) y agrega las que falten con su valor inicial
 const sembrarReglas = async () => {
     const { encabezados, filas } = await leerHoja(HOJAS.reglasBonificacion);
     const existentes = new Set(filas.map((f) => aTexto(f.clave).toLowerCase()));
+    const renombres = [];
+    for (const [nueva, anterior] of Object.entries(REGLAS_ANTERIORES)) {
+        const fila = filas.find((f) => aTexto(f.clave).toLowerCase() === anterior);
+        if (!fila || existentes.has(nueva)) continue;
+        renombres.push({ fila: fila._fila, cambios: { clave: nueva, descripcion: DESCRIPCION_REGLAS[nueva] } });
+        existentes.add(nueva);
+        console.log(`"${HOJAS.reglasBonificacion}": ${anterior} pasa a llamarse ${nueva} (valor ${aTexto(fila.valor)}).`);
+    }
+    await actualizarFilas(HOJAS.reglasBonificacion, renombres, encabezados);
     const nuevas = Object.entries(REGLAS_POR_DEFECTO)
         .filter(([clave]) => !existentes.has(clave))
         .map(([clave, valor]) => ({ clave, valor, descripcion: DESCRIPCION_REGLAS[clave] }));
