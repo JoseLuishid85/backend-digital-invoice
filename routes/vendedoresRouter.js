@@ -1,6 +1,6 @@
 const { Router } = require('express');
 const { verificarTokenVendedor } = require('../middlewares/authVendedoresMiddleware');
-const { login, perfil, registrarVendedor } = require('../controllers/authVendedoresController');
+const { login, perfil, registrarVendedor, cambiarPassword } = require('../controllers/authVendedoresController');
 
 // Cuenta y sesión de vendedores (datos en Google Sheets, no en MySQL)
 const router = Router();
@@ -13,5 +13,8 @@ router.post('/', registrarVendedor);
 
 // GET /bill/api/vendedores/perfil  (datos del vendedor del token)
 router.get('/perfil', verificarTokenVendedor, perfil);
+
+// PUT /bill/api/vendedores/password  (body JSON: { actual, nueva }; cambia la contraseña del usuario del token)
+router.put('/password', verificarTokenVendedor, cambiarPassword);
 
 module.exports = router;

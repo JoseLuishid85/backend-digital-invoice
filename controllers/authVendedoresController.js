@@ -1,8 +1,8 @@
 const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
-const { HOJAS, leerHoja, appendRow, siguienteId, conBloqueo } = require('../services/googleSheetsService');
+const { HOJAS, leerHoja, appendRow, actualizarFila, siguienteId, conBloqueo } = require('../services/googleSheetsService');
 const { registrarLog } = require('../services/historialService');
-const { aTexto, NIVELES, usuarioActivo, responderError } = require('../utils/cartera');
+const { aTexto, NIVELES, mismoId, usuarioActivo, responderError } = require('../utils/cartera');
 const { fechaHoy } = require('../utils/valores');
 
 const DURACION_TOKEN = process.env.JWT_EXPIRES_IN || '7d';
@@ -134,4 +134,48 @@ const registrarVendedor = async (req, res) => {
     }
 };
 
-module.exports = { login, perfil, registrarVendedor };
+// PUT /bill/api/vendedores/password  (body JSON: { actual, nueva }; vendedor o administrador del token)
+// Comprueba la contraseña actual y guarda la nueva cifrada. La contraseña actual incorrecta responde 400 y no 401:
+// el frontend cierra la sesión con cualquier 401. Los tokens ya emitidos siguen valiendo hasta que venzan.
+const cambiarPassword = async (req, res) => {
+    const actual = typeof req.body?.actual === 'string' ? req.body.actual : '';
+    const nueva = typeof req.body?.nueva === 'string' ? req.body.nueva : '';
+
+    if (!actual || !nueva) {
+        return res.status(400).json({ ok: false, mensaje: 'La contraseña actual y la nueva son obligatorias.' });
+    }
+    if (nueva.length < LARGO_MINIMO_PASSWORD) {
+        return res.status(400).json({
+            ok: false,
+            mensaje: `La nueva contraseña debe tener al menos ${LARGO_MINIMO_PASSWORD} caracteres.`,
+        });
+    }
+    if (nueva === actual) {
+        return res.status(400).json({ ok: false, mensaje: 'La nueva contraseña debe ser distinta de la actual.' });
+    }
+
+    try {
+        const passwordHash = await bcrypt.hash(nueva, SALT_ROUNDS);
+
+        // En cola para no pisar otra escritura de la hoja Usuarios
+        const resultado = await conBloqueo(async () => {
+            const { encabezados, filas } = await leerHoja(HOJAS.usuarios);
+            const usuario = filas.find((u) => mismoId(u.id_usuario, req.vendedor.id_usuario));
+            if (!usuario || !usuarioActivo(usuario)) return { status: 403, mensaje: 'El usuario no existe o está inactivo.' };
+            if (!(await bcrypt.compare(actual, aTexto(usuario.password_hash) || HASH_FICTICIO))) {
+                return { status: 400, mensaje: 'La contraseña actual no es correcta.' };
+            }
+            await actualizarFila(HOJAS.usuarios, usuario._fila, { password_hash: passwordHash }, encabezados);
+            return null;
+        });
+
+        if (resultado) return res.status(resultado.status).json({ ok: false, mensaje: resultado.mensaje });
+
+        registrarLog(req.vendedor.id_usuario, 'cambiar_password', { email: req.vendedor.email });
+        return res.json({ ok: true, mensaje: 'Contraseña actualizada.' });
+    } catch (error) {
+        return responderError(res, error, 'Error al cambiar la contraseña');
+    }
+};
+
+module.exports = { login, perfil, registrarVendedor, cambiarPassword };
